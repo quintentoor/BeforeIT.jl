@@ -1,7 +1,8 @@
 # # Full multiple-prediction pipeline
 
 import BeforeIT as Bit
-using Plots, StatsPlots
+# QUINTEN: Added Dates for DateTime and JLD2 for load
+using Dates, JLD2, Plots, StatsPlots
 
 # Decide the name of a folder where to store all data
 folder_name = "data/italy"

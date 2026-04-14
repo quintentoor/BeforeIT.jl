@@ -6,7 +6,8 @@
 
 using Preferences
 
-set_preferences!("BeforeIT", "typeInt" => "Int32", "typeFloat" => "Float32")
+# QUINTEN: Added force = true, otherwise it wouldn't overwrite
+set_preferences!("BeforeIT", "typeInt" => "Int32", "typeFloat" => "Float32"; force = true)
 
 import BeforeIT as Bit
 

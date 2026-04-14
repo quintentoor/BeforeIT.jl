@@ -6,7 +6,8 @@ using JLD2
 using Quadmath
 
 # this needs to be rerun using Float64
-const FloatType = Float128
+# Float64 for lines 81-86 and Float128 for lines 89-94
+const FloatType = Float64
 
 using Preferences
 
@@ -34,6 +35,11 @@ function step_and_reduce_auto!(gradient_vals, model_arr, gdpinit0, start_model)
     return 100 * (gdp(m) - gdpinit) / gdpinit - (100 * (gdpinit - gdpinit0) / gdpinit0)^2
 end
 
+# QUINTEN: For if model.jld2 doesn't exist yet
+if !isfile("model.jld2")
+    _m = Bit.Model(Bit.AUSTRIA2010Q1.parameters, Bit.AUSTRIA2010Q1.initial_conditions)
+    save("model.jld2", "model", _m)
+end
 const model = load("model.jld2")["model"];
 const gdpinit0 = gdp(model)
 const backend = AutoMooncake()

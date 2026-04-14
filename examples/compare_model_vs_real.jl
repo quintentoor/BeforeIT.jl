@@ -1,12 +1,14 @@
 import BeforeIT as Bit
 
-using Plots, StatsPlots, Dates
+# QUINTEN: Add JLD2 to bring load into scope
+using Plots, StatsPlots, Dates, JLD2
 
 # load data from 1996
 real_data = Bit.ITALY_CALIBRATION.data
 
 # load predictions from 2010Q1
-model = load("data/italy/abm_predictions/2015Q1.jld2")["model_dict"]
+# QUINTEN: changed to 2010, was first 2015
+model = load("data/italy/abm_predictions/2010Q1.jld2")["model_dict"]
 
 # Plot real gdp
 Bit.plot_model_vs_real(model, real_data, "real_gdp")

@@ -1,7 +1,8 @@
 # Forecasts conditional on the REALISED path of Government expenditure, Exports and Imports
 
 import BeforeIT as Bit
-using Plots
+# QUINTEN: include StatsPlots since BeforeITPlots triggers it
+using Plots, StatsPlots
 
 Bit.@object struct NewModel(Bit.Model) <: Bit.AbstractModel end
 

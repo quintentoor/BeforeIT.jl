@@ -7,8 +7,8 @@ using Plots, StatsPlots
 # We then initialise the model loading some precomputed set of parameters and by specifying a number of epochs.
 # In another tutorial we will illustrate how to compute parameters and initial conditions.
 
-parameters = Bit.AUSTRIA2010Q1.parameters
-initial_conditions = Bit.AUSTRIA2010Q1.initial_conditions
+parameters = Bit.ITALY2010Q1.parameters
+initial_conditions = Bit.ITALY2010Q1.initial_conditions
 
 # We can now initialise the model
 model = Bit.Model(parameters, initial_conditions);
@@ -36,7 +36,7 @@ ps = Bit.plot_data(model, quantities = [:real_gdp, :real_household_consumption, 
 plot(ps..., layout = (3, 3))
 
 # To run multiple Monte-Carlo repetitions in parallel we can use
-models = (Bit.Model(parameters, initial_conditions) for _ in 1:2)
+models = (Bit.Model(parameters, initial_conditions) for _ in 1:100)
 models = Bit.ensemblerun!(models, T)
 
 # Note that we can equivalently run n_sims models for T steps in the single command
