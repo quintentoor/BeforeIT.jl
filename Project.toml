@@ -4,10 +4,8 @@ version = "0.5.0"
 authors = ["Aldo Glielmo <aldo.glielmo@bancaditalia.it>", "Mitja Devetak <m888itja@gmail.com>", "Adriano Meligrana <adrianomeligrana@proton.me>"]
 
 [deps]
-CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CommonSolve = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
-DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
@@ -19,7 +17,6 @@ Preferences = "21216c6a-2e73-6563-6e65-726566657250"
 Quadmath = "be4d8f0f-7fa4-5f49-b795-2f01399ab2dd"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
-ThreadPinning = "811555cd-349b-4f26-b7bc-1f208b848042"
 Unrolled = "9602ed7d-8fef-5bc8-8597-8f21381861e8"
 WeightVectors = "02edb123-fbf3-4025-abe6-bed5b7376cdf"
 
@@ -33,10 +30,8 @@ BeforeITFormat = "Runic"
 BeforeITPlots = ["Plots", "StatsPlots"]
 
 [compat]
-CairoMakie = "0.15.9"
 CommonSolve = "0.2"
 Dates = "1"
-DifferentiationInterface = "0.7.16"
 Distributions = "0.25"
 Downloads = "1"
 JLD2 = "0.4, 0.5, 0.6"
@@ -51,7 +46,6 @@ Random = "1"
 Runic = "1"
 StatsBase = "0.34"
 StatsPlots = "0.15"
-ThreadPinning = "1.1.1"
 Unrolled = "0.1"
 WeightVectors = "0.1"
 julia = "1.9"

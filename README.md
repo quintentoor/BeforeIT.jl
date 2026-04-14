@@ -117,14 +117,27 @@ cd BeforeIT.jl
 julia -e 'using Pkg; Pkg.activate("."); Pkg.instantiate();'
 ```
 
-### Run Tests
+### QUINTEN: problem in the code below: runs tests fails when some packages are in deps, format packages doesn;t work when these packages are not in deps.
+
+
+
+### Run Tests DOESN'T WORK
 ```bash
 julia --proj test/runtests.jl
+```
+### QUINTEN: We should use somthing else, it doesn't see all dependencies.
+```bash
+julia --project=. -e 'using Pkg; Pkg.test()'
 ```
 
 ### Format the Package
 ```bash
 julia --proj format.jl
+```
+
+### QUINTEN: Use 
+```bash
+julia --project=test format.jl
 ```
 
 ## Current Authors
