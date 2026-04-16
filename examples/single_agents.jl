@@ -145,5 +145,17 @@ prop_new = NewProperties(Bit.fields(prop)..., ConsumerLoanContract[])
 
 model = NewModel(w_act_new, w_inact, firms, bank, cb, gov, rotw, agg, prop_new, data)
 
-# and evolve it
-Bit.step!(model)
+# and evolve it, tracking total loans over time
+T = 16
+total_loaned = Float64[]
+
+for _ in 1:T
+    Bit.step!(model)
+    total = sum(c.principal for c in model.prop.contracts; init = 0.0)
+    push!(total_loaned, total)
+end
+
+# plot the total amount of outstanding loans over time
+using Plots
+plot(total_loaned, label = "total loans", xlabel = "time step", ylabel = "total principal")
+
