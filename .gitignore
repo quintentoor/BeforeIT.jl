@@ -40,6 +40,9 @@ Manifest.toml
 # other files
 .DS_Store
 
+# Large Eurostat data tables (too big for GitHub; fetched/generated locally)
+data/010_eurostat_tables/
+
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
 # website: http://jupyter.org/
