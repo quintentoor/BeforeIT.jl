@@ -27,6 +27,9 @@ using Runic
     # accounting identities
     include("accounting_identities.jl")
 
+    # carbon model extension
+    include("carbon_model.jl")
+
     # shock tests
     include("shocks/shocks.jl")
 

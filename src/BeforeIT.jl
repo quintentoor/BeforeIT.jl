@@ -97,6 +97,7 @@ include("shocks/shocks.jl")
 
 # model extensions
 include("model_extensions/init_CANVAS.jl")
+include("model_extensions/init_carbon.jl")
 
 # external functions definitions
 include("utils/extensions.jl")

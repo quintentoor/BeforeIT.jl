@@ -2,13 +2,14 @@
 
 # We start by importing the BeforeIT library and other useful libraries.
 import BeforeIT as Bit
-using Plots, StatsPlots
+using Plots, StatsPlots, JLD2
 
 # We then initialise the model loading some precomputed set of parameters and by specifying a number of epochs.
 # In another tutorial we will illustrate how to compute parameters and initial conditions.
 
-parameters = Bit.AUSTRIA2010Q1.parameters
-initial_conditions = Bit.AUSTRIA2010Q1.initial_conditions
+data = load("data/020_calibration_output/NL/2015Q1_parameters_initial_conditions.jld2")
+parameters = data["parameters"]
+initial_conditions = data["initial_conditions"]
 
 # We can now initialise the model
 model = Bit.Model(parameters, initial_conditions);
@@ -51,4 +52,4 @@ Threads.nthreads()
 # `julia -t 8` in the terminal.
 # We can then plot the results of the monte-carlo repetitions using the function `plot_data_vector`
 ps = Bit.plot_data_vector(models)
-
+plot(ps..., layout = (3, 3))

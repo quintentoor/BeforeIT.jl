@@ -158,4 +158,3 @@ end
 # plot the total amount of outstanding loans over time
 using Plots
 plot(total_loaned, label = "total loans", xlabel = "time step", ylabel = "total principal")
-
