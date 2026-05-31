@@ -128,9 +128,13 @@ function initialize_variables_retail_market(firms, rotw, prop, agg, w_act, w_ina
     # ... Initialize all the variables ...
 
     # change some variables according to arguments of matlab function
-    b_HH_g = agg.P_bar_g .* prop.b_HH_g / sum(agg.P_bar_g .* prop.b_HH_g)    #prop.b_HH_g
+    # Household consumption CES demand function
+    b_HH_g = agg.P_bar_g .^ (1 - prop.sigma_HH) .* prop.b_HH_g / sum(agg.P_bar_g .^ (1 - prop.sigma_HH) .* prop.b_HH_g)    #prop.b_HH_g
+    # Household housing investment Leontief demand function
     b_CFH_g = agg.P_bar_g .* prop.b_CFH_g / sum(agg.P_bar_g .* prop.b_CFH_g) #prop.b_CFH_g
+    # Government Leontief demand function
     c_G_g = agg.P_bar_g .* prop.c_G_g / sum(agg.P_bar_g .* prop.c_G_g)       #prop.c_G_g
+    # Exports Leontief demand fucntion
     c_E_g = agg.P_bar_g .* prop.c_E_g / sum(agg.P_bar_g .* prop.c_E_g)       #prop.c_E_g
 
     G = size(agg.P_bar_g, 1)

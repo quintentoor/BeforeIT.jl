@@ -58,6 +58,71 @@ using Test
         @test carbon_mean > base_mean
     end
 
+    # Incremental-tax test — a `CarbonTaxRamp` shock raises tau_carbon by a fixed
+    # amount each quarter. The stored rate must follow the linear path, the
+    # ramped run must raise strictly more revenue than a constant run pinned at
+    # the ramp's starting rate, and the GVA identity must still hold.
+    @testset "CarbonTaxRamp raises tax each quarter" begin
+        intensity = ones(Float64, G)
+        intensity[1] = 5.0
+        tau_0, incr = 0.1, 0.1
+
+        Random.seed!(123)
+        ramped = Bit.ModelCarbon(
+            parameters, initial_conditions; tau_carbon = tau_0, carbon_intensity_s = intensity,
+        )
+        ramp = Bit.CarbonTaxRamp(tau_0, incr)
+        for _ in 1:T
+            Bit.step!(ramped; parallel = false, shock! = ramp)
+            Bit.collect_data!(ramped)
+        end
+        # After T steps agg.t == T + 1, but the shock caps reads at the last
+        # executed quarter T, so the stored rate reflects quarter T.
+        @test isapprox(ramped.firms.tau_carbon, tau_0 + incr * (T - 1); atol = 1.0e-12)
+
+        # Constant run pinned at the ramp's starting rate, same seed/intensities.
+        Random.seed!(123)
+        flat = Bit.ModelCarbon(
+            parameters, initial_conditions; tau_carbon = tau_0, carbon_intensity_s = intensity,
+        )
+        for _ in 1:T
+            Bit.step!(flat; parallel = false)
+            Bit.collect_data!(flat)
+        end
+
+        @test sum(ramped.data.taxes_production) > sum(flat.data.taxes_production)
+
+        # GVA identity still holds under a time-varying tax.
+        zero1 = sum(
+            ramped.data.nominal_gva - ramped.data.compensation_employees -
+                ramped.data.operating_surplus - ramped.data.taxes_production,
+        )
+        @test isapprox(zero1, 0.0, atol = 1.0e-8)
+    end
+
+    # Start-time test — with start_time > 1 the tax is off (tau_carbon == 0)
+    # until that quarter, then switches on at tau_carbon_0.
+    @testset "CarbonTaxRamp start_time delays the tax" begin
+        intensity = ones(Float64, G)
+        intensity[1] = 5.0
+        tau_0, incr, start = 0.1, 0.1, 3
+
+        Random.seed!(321)
+        model = Bit.ModelCarbon(
+            parameters, initial_conditions; tau_carbon = tau_0, carbon_intensity_s = intensity,
+        )
+        ramp = Bit.CarbonTaxRamp(tau_0, incr; start_time = start)
+
+        # Quarters before start_time: tax is off.
+        for _ in 1:(start - 1)
+            Bit.step!(model; parallel = false, shock! = ramp)
+            @test model.firms.tau_carbon == 0.0
+        end
+        # start_time quarter: tax switches on at the base rate.
+        Bit.step!(model; parallel = false, shock! = ramp)
+        @test isapprox(model.firms.tau_carbon, tau_0; atol = 1.0e-12)
+    end
+
     # Accounting test — every standard accounting identity must still hold for
     # the carbon model. Money raised by the carbon tax flows from firms to the
     # government with no leakage.

@@ -20,6 +20,7 @@ Bit.@object mutable struct Properties(Object) <: AbstractProperties
     theta_UB::Bit.typeFloat
     psi::Bit.typeFloat
     psi_H::Bit.typeFloat
+    sigma_HH::Bit.typeFloat   # CES elasticity of substitution across consumption sectors
     mu::Bit.typeFloat
     theta_DIV::Bit.typeFloat
     theta::Bit.typeFloat
@@ -66,6 +67,7 @@ function Properties(parameters::Dict{String, Any}, initial_conditions)
     tau_G = typeFloat(parameters["tau_G"])      # Tax rate on government consumption
     theta_UB = typeFloat(parameters["theta_UB"])   # Unemployment benefit replacement rate
     psi = typeFloat(parameters["psi"])        # Fraction of income devoted to consumption
+    sigma_HH = typeFloat(get(parameters, "sigma_HH", 0.0))  # default 0 → Leontief, reproduces baseline
     psi_H = typeFloat(parameters["psi_H"])      # Fraction of income devoted to investment in housing
     mu = typeFloat(parameters["mu"])         # Risk premium on policy rate
 
@@ -95,7 +97,7 @@ function Properties(parameters::Dict{String, Any}, initial_conditions)
 
     return Properties(
         G, T_prime, H_act, H_inact, J, L, I_s, I, H, tau_INC, tau_FIRM, tau_VAT, tau_SIF,
-        tau_SIW, tau_EXPORT, tau_CF, tau_G, theta_UB, psi, psi_H, mu, theta_DIV, theta, zeta, zeta_LTV,
+        tau_SIW, tau_EXPORT, tau_CF, tau_G, theta_UB, psi, psi_H, sigma_HH, mu, theta_DIV, theta, zeta, zeta_LTV,
         zeta_b, b_CF_g, b_CFH_g, b_HH_g, c_G_g, c_E_g, c_I_g, a_sg, C, D_H, K_H, sb_other, E_k, r_bar
     )
 end
