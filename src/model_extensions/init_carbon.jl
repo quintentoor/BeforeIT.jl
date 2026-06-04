@@ -141,12 +141,14 @@ end
 
 
 """
-    CarbonTransition(ramp, sector; rate = 0.3, max_step = 0.1)
+    CarbonTransition(ramp, sectors; rate = 0.3, max_step = 0.1)
 
 A composite `step!` shock that drives an energy-transition scenario: it applies
 the `CarbonTaxRamp` `ramp` (setting `tau_carbon` for the quarter) and then runs
-`reallocate_green_capacity!` on `sector`, shifting capital and demand from the
-fossil firm to the renewable firm at a pace set by the tax-driven price gap.
+`reallocate_green_capacity!` on each split sector, shifting capital and demand
+from the fossil firms to the renewable firm at a pace set by the tax-driven price
+gap. `sectors` may be a single sector index or a list of them (one abatement
+strategy per split sector).
 
 - `rate`: reallocation speed — fraction of a dirty firm's capital/demand moved
   per unit of relative price gap, per quarter.
@@ -156,16 +158,83 @@ Use with a sector-split `ModelCarbon` (see the `split_sector` constructor arg).
 """
 struct CarbonTransition <: Bit.AbstractShock
     ramp::CarbonTaxRamp
-    sector::Int
+    sectors::Vector{Int}
     rate::Bit.typeFloat
     max_step::Bit.typeFloat
 end
-CarbonTransition(ramp::CarbonTaxRamp, sector::Integer; rate::Real = 0.3, max_step::Real = 0.1) =
-    CarbonTransition(ramp, Int(sector), Bit.typeFloat(rate), Bit.typeFloat(max_step))
+function CarbonTransition(
+        ramp::CarbonTaxRamp, sectors::Union{Integer, AbstractVector{<:Integer}};
+        rate::Real = 0.3, max_step::Real = 0.1,
+    )
+    secs = sectors isa Integer ? [Int(sectors)] : Int.(sectors)
+    return CarbonTransition(ramp, secs, Bit.typeFloat(rate), Bit.typeFloat(max_step))
+end
 
 function (s::CarbonTransition)(model::ModelCarbon)
     s.ramp(model)
-    reallocate_green_capacity!(model, s.sector, s.rate, s.max_step)
+    for sector in s.sectors
+        reallocate_green_capacity!(model, sector, s.rate, s.max_step)
+    end
+    return nothing
+end
+
+
+"""
+    ProductivityGrowth(annual_rate; start_time = 1, final_time = typemax(Int))
+
+Trend labour-productivity growth, applied as a `step!` shock. The model runs
+quarterly, so each quarter `t` in `[start_time, final_time]` this multiplies every
+firm's baseline labour productivity `alpha_bar_i` by the quarterly factor
+`(1 + annual_rate)^(1/4)`. Productivity therefore compounds to exactly
+`annual_rate` per year (e.g. `0.01` → +1%/year).
+
+Why this matters: the workforce `H_W = H_act - I - 1` is fixed (no demographic
+growth), so real output is bounded by `∑ N_i · alpha_i ≤ H_W · alpha`. Once
+unemployment hits 0% that ceiling can only rise if `alpha_bar_i` rises — which is
+exactly what this shock does. Runs at the top of `step!` (before firms set prices
+and decisions), so the bumped productivity feeds that quarter's cost-push pricing,
+employment targets and production. Compose it with a carbon shock via
+[`CombinedShock`](@ref).
+"""
+struct ProductivityGrowth <: Bit.AbstractShock
+    quarterly_factor::Bit.typeFloat
+    start_time::Int
+    final_time::Int
+end
+function ProductivityGrowth(annual_rate; start_time::Integer = 1, final_time::Integer = typemax(Int))
+    qf = (one(Bit.typeFloat) + Bit.typeFloat(annual_rate))^(one(Bit.typeFloat) / 4)
+    return ProductivityGrowth(qf, Int(start_time), Int(final_time))
+end
+
+function (s::ProductivityGrowth)(model::Bit.AbstractModel)
+    t = model.agg.t
+    if s.start_time <= t <= s.final_time
+        model.firms.alpha_bar_i .*= s.quarterly_factor
+    end
+    return nothing
+end
+
+
+"""
+    CombinedShock(shocks...)
+
+Apply several `step!` shocks in sequence within each quarter, in the order given.
+Use it to run a [`ProductivityGrowth`](@ref) trend alongside a
+[`CarbonTaxRamp`](@ref) / [`CarbonTransition`](@ref), e.g.
+
+    shock! = Bit.CombinedShock(Bit.ProductivityGrowth(0.01), ramp)
+
+Each sub-shock receives the same model and mutates it before the next runs.
+"""
+struct CombinedShock{S <: Tuple} <: Bit.AbstractShock
+    shocks::S
+end
+CombinedShock(shocks...) = CombinedShock(shocks)
+
+function (s::CombinedShock)(model::Bit.AbstractModel)
+    for shk in s.shocks
+        shk(model)
+    end
     return nothing
 end
 
@@ -311,23 +380,28 @@ Keyword arguments:
 
 Dirty/clean split (Option A — within-sector firm heterogeneity)
 ---------------------------------------------------------------
-- `split_sector`: a sector index (e.g. the electricity sector) to split into a
-  *fossil* firm and a *renewable* firm. `nothing` (default) disables the split
-  and reproduces the plain carbon model exactly.
-- `renewable_share`: the fraction of that sector's initial size (output, capital,
-  employment, …) assigned to the clean firm. The remaining `1 - renewable_share`
-  goes to the fossil firm.
-- `renewable_intensity`: CO₂ intensity of the clean firm (defaults to 0).
+- `split_sector`: a sector index — or a *list* of sector indices — to split, each
+  into its pre-existing *fossil* firm(s) and one new *renewable* firm. Splitting
+  several sectors lets each represent a different abatement strategy. `nothing`
+  (default) disables the split and reproduces the plain carbon model exactly.
+- `renewable_share`: the fraction of a split sector's initial size (output, capital,
+  employment, …) assigned to its clean firm; the remaining `1 - renewable_share`
+  stays with the fossil firms. Pass a scalar to apply the same share to every split
+  sector, or a vector with one entry per split sector.
+- `renewable_intensity`: CO₂ intensity of the clean firm(s) (defaults to 0). Scalar
+  or one entry per split sector, like `renewable_share`.
 
-When a sector is split, an extra firm is added to the economy (so one active
-worker becomes its owner — `I_s[split_sector]` is bumped by 1 and every
-sub-object is rebuilt consistently). The two firms together reproduce the
-sector's calibrated aggregates, and the fossil firm's intensity is scaled to
-`carbon_intensity_s[split_sector] / (1 - renewable_share)` so that *initial*
-total emissions are unchanged. The split is meaningful only with a price signal:
-the carbon tax raises the fossil firm's price via `cost_push_inflation`, and the
-existing price-weighted matching then shifts both intermediate (firm) and final
-(household) demand toward the cheaper renewable firm.
+When a sector is split, one renewable firm is appended to the economy (so one
+active worker becomes its owner — `I_s` is bumped by 1 for that sector and every
+sub-object is rebuilt consistently); every firm the sector already had becomes a
+fossil firm. This works for any sector firm count, so it is robust across
+calibrations where the electricity sector already has several firms. The sector's
+firms together reproduce its calibrated aggregates, and each fossil firm's
+intensity is scaled to `carbon_intensity_s[split_sector] / (1 - renewable_share)`
+so that *initial* total emissions are unchanged. The split is meaningful only with
+a price signal: the carbon tax raises the fossil firms' price via
+`cost_push_inflation`, and the existing price-weighted matching then shifts both
+intermediate (firm) and final (household) demand toward the cheaper renewable firm.
 
 With `tau_carbon == 0` and `split_sector === nothing` the model is observationally
 equivalent to the base `Bit.Model` (regression test guard).
@@ -337,9 +411,9 @@ function ModelCarbon(
         initial_conditions::Dict{String, Any};
         tau_carbon::Real = 0.05,
         carbon_intensity_s::AbstractVector{<:Real} = ones(Bit.typeFloat, Int(parameters["G"])),
-        split_sector::Union{Nothing, Integer} = nothing,
-        renewable_share::Real = 0.0,
-        renewable_intensity::Real = 0.0,
+        split_sector::Union{Nothing, Integer, AbstractVector{<:Integer}} = nothing,
+        renewable_share::Union{Real, AbstractVector{<:Real}} = 0.0,
+        renewable_intensity::Union{Real, AbstractVector{<:Real}} = 0.0,
     )
     p, ic = parameters, initial_conditions
 
@@ -347,17 +421,40 @@ function ModelCarbon(
     length(carbon_intensity_s) == G ||
         error("carbon_intensity_s must have length G = $G, got $(length(carbon_intensity_s))")
 
-    # When splitting a sector, add one firm to it and rebuild every sub-object
+    # Normalise the split arguments to one entry per split sector. `split_sector`
+    # may be `nothing` (no split), a single sector index, or a list of indices;
+    # `renewable_share`/`renewable_intensity` may be a scalar (applied to every
+    # split sector) or a vector with one entry per split sector.
+    split_sectors =
+        split_sector === nothing ? Int[] :
+        split_sector isa Integer ? [Int(split_sector)] : Int.(split_sector)
+    n_split = length(split_sectors)
+    shares = renewable_share isa Real ? fill(Bit.typeFloat(renewable_share), n_split) :
+        Vector{Bit.typeFloat}(renewable_share)
+    intensities = renewable_intensity isa Real ? fill(Bit.typeFloat(renewable_intensity), n_split) :
+        Vector{Bit.typeFloat}(renewable_intensity)
+
+    if n_split > 0
+        length(shares) == n_split ||
+            error("renewable_share must be a scalar or have one entry per split sector ($n_split), got $(length(shares))")
+        length(intensities) == n_split ||
+            error("renewable_intensity must be a scalar or have one entry per split sector ($n_split), got $(length(intensities))")
+        allunique(split_sectors) || error("split_sector entries must be unique, got $split_sectors")
+        all(s -> 1 <= s <= G, split_sectors) || error("every split_sector must be in 1:G = 1:$G, got $split_sectors")
+        all(x -> 0 < x < 1, shares) || error("every renewable_share must be in (0, 1), got $shares")
+    end
+
+    # When splitting sectors, add one firm to each and rebuild every sub-object
     # from the *same* modified parameters so that firm count, the active
     # workforce (`H_W = H_act - I - 1`) and the owner-household accounting all
     # stay consistent. `p` is a shallow copy with a fresh `I_s`, so the caller's
     # dict is never mutated.
-    if split_sector !== nothing
-        1 <= split_sector <= G || error("split_sector must be in 1:G = 1:$G")
-        0 < renewable_share < 1 || error("renewable_share must be in (0, 1)")
+    if n_split > 0
         p = copy(parameters)
         I_s_new = Vector{Int}(vec(parameters["I_s"]))
-        I_s_new[split_sector] += 1
+        for s in split_sectors
+            I_s_new[s] += 1
+        end
         p["I_s"] = I_s_new
     end
 
@@ -366,13 +463,13 @@ function ModelCarbon(
     carbon_intensity_i = Vector{Bit.typeFloat}(carbon_intensity_s[firms_st.G_i])
     firms = FirmsCarbon(Bit.fields(firms_st)..., carbon_intensity_i, Bit.typeFloat(tau_carbon))
 
-    # Re-apportion the two firms of the split sector into fossil + renewable and
-    # set their per-firm intensities. Done before model assembly so the
-    # worker→firm assignment (which reads `V_i`) sees the apportioned sizes.
-    if split_sector !== nothing
+    # Re-apportion each split sector into fossil + renewable firms and set their
+    # per-firm intensities. Done before model assembly so the worker→firm
+    # assignment (which reads `V_i`) sees the apportioned sizes.
+    for (k, s) in enumerate(split_sectors)
         split_sector_into_fossil_renewable!(
-            firms, Int(split_sector), Bit.typeFloat(renewable_share),
-            Bit.typeFloat(carbon_intensity_s[split_sector]), Bit.typeFloat(renewable_intensity), p, ic,
+            firms, s, shares[k],
+            Bit.typeFloat(carbon_intensity_s[s]), intensities[k], p, ic,
         )
     end
 
@@ -394,47 +491,88 @@ function ModelCarbon(
 end
 
 
+# Distribute the integer `total` across buckets in proportion to `weights`,
+# giving each bucket at least 1 and reproducing `total` exactly (largest-remainder
+# method). Used to re-spread the fossil firms' employment after carving out the
+# renewable share.
+function allocate_integer(weights::AbstractVector, total::Integer)
+    n = length(weights)
+    total >= n || error("cannot allocate $total across $n buckets keeping each ≥ 1")
+    s = sum(weights)
+    w = s > 0 ? collect(float.(weights)) ./ s : fill(1.0 / n, n)
+    raw = w .* total
+    alloc = max.(floor.(Int, raw), 1)            # provisional, each ≥ 1
+    diff = total - sum(alloc)                    # leftover to add (+) or trim (−)
+    rema = raw .- floor.(raw)
+    if diff > 0                                  # add to the largest remainders
+        for b in sortperm(rema, rev = true)[1:diff]
+            alloc[b] += 1
+        end
+    elseif diff < 0                              # trim from buckets that can spare one
+        cand = sort(filter(b -> alloc[b] > 1, 1:n), by = b -> rema[b])
+        k = 0
+        while diff < 0
+            b = cand[(k % length(cand)) + 1]
+            if alloc[b] > 1
+                alloc[b] -= 1; diff += 1
+            end
+            k += 1
+        end
+    end
+    return Vector{Bit.typeInt}(alloc)
+end
+
+
 """
     split_sector_into_fossil_renewable!(firms, sector, renewable_share,
                                         sector_intensity, renewable_intensity, p, ic)
 
-Turn the two firms the constructor created in `sector` into a fossil firm
-(index `idx[1]`) and a renewable firm (index `idx[2]`), re-apportioning their
-calibrated state so the pair reproduces the sector total and the renewable firm
-holds `renewable_share` of it. The fossil intensity is scaled so that initial
-total emissions are unchanged; the renewable firm gets `renewable_intensity`.
+Designate the single firm the constructor appended to `sector` as the *renewable*
+firm (last index in the sector) and treat every pre-existing firm in the sector as
+*fossil*, re-apportioning the sector's calibrated state so the renewable firm holds
+`renewable_share` of it and the fossil firms split the remainder in proportion to
+their calibrated sizes. The fossil intensity is scaled so that initial total
+emissions are unchanged; the renewable firm gets `renewable_intensity`.
 
-All extensive (size-proportional) fields are split by the *realised* employment
-share `N_renew / N_total`, which keeps `Y_i = α·N_i` exactly consistent. Intensive
-sector-level fields (`alpha_bar_i`, `beta_i`, …) are already identical for both
-firms and are left untouched. Owner-household income/wealth (`Y_h`, `K_h`, `D_h`)
-is recomputed per firm exactly as in `Bit.Firms`.
+Works for any sector firm count (so it is robust across calibrations where the
+electricity sector already has several firms, e.g. NL 2023Q4). All extensive
+(size-proportional) fields are split by the *realised* employment share, which
+keeps `Y_i = α·N_i` exactly consistent. Intensive sector-level fields
+(`alpha_bar_i`, `beta_i`, …) are already identical across the sector's firms and
+are left untouched. Owner-household income/wealth (`Y_h`, `K_h`, `D_h`) is
+recomputed per firm exactly as in `Bit.Firms`.
 """
 function split_sector_into_fossil_renewable!(
         firms::FirmsCarbon, sector::Int, renewable_share::Bit.typeFloat,
         sector_intensity::Bit.typeFloat, renewable_intensity::Bit.typeFloat, p, ic,
     )
     idx = findall(==(sector), firms.G_i)
-    length(idx) == 2 ||
-        error("expected exactly 2 firms in split sector $sector, found $(length(idx))")
-    ff, fr = idx[1], idx[2]   # fossil, renewable
+    length(idx) >= 2 ||
+        error("split sector $sector must contain ≥ 2 firms after the split, found $(length(idx))")
+    # The renewable firm is the one the constructor appended (last in the sector);
+    # every pre-existing firm in the sector becomes a fossil firm.
+    ren = idx[end]
+    foss = idx[1:(end - 1)]
 
-    # Split integer employment first; clamp so each firm keeps at least 1 worker.
-    N_tot = firms.N_i[ff] + firms.N_i[fr]
-    N_tot >= 2 || error("split sector $sector has too little employment ($N_tot) to split")
-    N_fr = clamp(round(Bit.typeInt, renewable_share * N_tot), 1, N_tot - 1)
-    N_ff = N_tot - N_fr
-    firms.N_i[fr] = N_fr; firms.N_i[ff] = N_ff
-    firms.V_i[fr] = N_fr; firms.V_i[ff] = N_ff
+    # Re-apportion integer employment across the whole sector. Renewable takes
+    # `renewable_share` of the sector total; the fossil firms split the remainder
+    # in proportion to their calibrated sizes. Clamp so renewable and every fossil
+    # firm keep at least one worker.
+    N_tot = sum(@view firms.N_i[idx])
+    N_tot >= length(idx) ||
+        error("split sector $sector has too little employment ($N_tot) to split across $(length(idx)) firms")
+    N_ren = clamp(round(Bit.typeInt, renewable_share * N_tot), 1, N_tot - length(foss))
+    firms.N_i[foss] .= allocate_integer(firms.N_i[foss], N_tot - N_ren)
+    firms.N_i[ren] = N_ren
+    firms.V_i[idx] .= @view firms.N_i[idx]
 
-    # Apportion every continuous extensive field by the realised employment share
-    # `sr`, so Y_i = α·N_i stays exact (Y_tot = α·N_tot ⇒ sr·Y_tot = α·N_fr).
-    sr = N_fr / N_tot
+    # Apportion every continuous extensive field by the realised employment share,
+    # so Y_i = α·N_i stays exact (all extensive fields are ∝ N within a sector) and
+    # the sector total is preserved.
+    shares = (@view firms.N_i[idx]) ./ N_tot
     for field in (:Y_i, :Q_d_i, :K_i, :M_i, :L_i, :D_i, :S_i)
         v = getfield(firms, field)
-        tot = v[ff] + v[fr]
-        v[fr] = sr * tot
-        v[ff] = tot - v[fr]
+        v[idx] .= shares .* sum(@view v[idx])
     end
 
     # Recompute profits and owner-household income/wealth per firm, exactly as
@@ -442,7 +580,7 @@ function split_sector_into_fossil_renewable!(
     r = ic["r_bar"] + p["mu"]
     r_bar = ic["r_bar"]
     P_bar_HH = one(Bit.typeFloat)
-    for f in (ff, fr)
+    for f in idx
         firms.Pi_i[f] = firms.pi_bar_i[f] * firms.Y_i[f] - r * firms.L_i[f] + r_bar * max(0, firms.D_i[f])
         firms.Y_h[f] = p["theta_DIV"] * (1 - p["tau_INC"]) * (1 - p["tau_FIRM"]) * max(0, firms.Pi_i[f]) +
             ic["sb_other"] * P_bar_HH
@@ -450,9 +588,11 @@ function split_sector_into_fossil_renewable!(
         firms.D_h[f] = ic["D_H"] * firms.Y_h[f]
     end
 
-    # Per-firm carbon intensities: fossil carries all the sector's emissions
-    # (scaled so initial totals are preserved), renewable is (near) clean.
-    firms.carbon_intensity_i[ff] = sector_intensity / (1 - renewable_share)
-    firms.carbon_intensity_i[fr] = renewable_intensity
+    # Per-firm carbon intensities: the fossil firms carry all the sector's
+    # emissions (scaled by the *realised* fossil output share so initial totals are
+    # preserved), renewable is (near) clean.
+    sr = N_ren / N_tot
+    firms.carbon_intensity_i[foss] .= sector_intensity / (1 - sr)
+    firms.carbon_intensity_i[ren] = renewable_intensity
     return firms
 end

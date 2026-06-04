@@ -170,4 +170,60 @@ using Test
         zero5 = sum(model.firms.D_i) + tot_D_h + sum(model.bank.E_k) - sum(model.firms.L_i) - model.bank.D_k
         @test isapprox(zero5, 0.0, atol = 1.0e-8)
     end
+
+    # Multi-sector split — splitting several sectors must append one renewable
+    # firm per sector, preserve each split sector's initial emissions, and let a
+    # multi-sector `CarbonTransition` raise every renewable firm's output share.
+    @testset "multi-sector split + transition" begin
+        Random.seed!(2024)
+        base = Bit.Model(parameters, initial_conditions)
+        # Split the two sectors with the most employment, so each has plenty of
+        # workers to spread across its firms after carving out a renewable firm.
+        N_by_sector = [sum(base.firms.N_i[base.firms.G_i .== g]) for g in 1:G]
+        split = sortperm(N_by_sector; rev = true)[1:2]
+
+        intensity = ones(Float64, G)
+        intensity[split] .= 5.0  # make the split sectors visibly dirty
+        share, ren_int = 0.2, 0.0
+
+        Random.seed!(2024)
+        model = Bit.ModelCarbon(
+            parameters, initial_conditions;
+            tau_carbon = 0.0, carbon_intensity_s = intensity,
+            split_sector = split, renewable_share = share, renewable_intensity = ren_int,
+        )
+
+        # One renewable firm is appended per split sector.
+        @test length(model.firms.G_i) == Int(sum(parameters["I_s"])) + length(split)
+
+        for s in split
+            idx = findall(==(s), model.firms.G_i)
+            ren = idx[end]
+            foss = idx[1:(end - 1)]
+            # The appended firm is the (near-)clean renewable firm; the fossil
+            # firms are scaled up so the split sector's initial emissions equal
+            # intensity[s] times the sector's (post-split) total output.
+            @test model.firms.carbon_intensity_i[ren] == ren_int
+            @test all(model.firms.carbon_intensity_i[foss] .> intensity[s])
+            sector_em = sum(model.firms.carbon_intensity_i[idx] .* model.firms.Y_i[idx])
+            @test isapprox(sector_em, intensity[s] * sum(model.firms.Y_i[idx]); rtol = 1.0e-10)
+        end
+
+        # A multi-sector transition under a real tax must raise the renewable
+        # output share in every split sector.
+        function ren_share(m, s)
+            idx = findall(==(s), m.firms.G_i)
+            return m.firms.Y_i[idx[end]] / sum(m.firms.Y_i[idx])
+        end
+        share0 = [ren_share(model, s) for s in split]
+
+        ramp = Bit.CarbonTaxRamp(0.2, 0.1)
+        transition = Bit.CarbonTransition(ramp, split; rate = 0.3, max_step = 0.1)
+        for _ in 1:8
+            Bit.step!(model; parallel = false, shock! = transition)
+            Bit.collect_data!(model)
+        end
+        share1 = [ren_share(model, s) for s in split]
+        @test all(share1 .> share0)
+    end
 end
