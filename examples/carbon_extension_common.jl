@@ -171,7 +171,7 @@ between them is the carbon tax itself — the comparison stays clean per run whi
 the band across runs shows the spread. Every panel plots the cross-run mean as a
 line with a ±1 standard-deviation ribbon.
 """
-function run_comparison(; abatement::Bool, n_sims::Int = 5)
+function run_comparison(; abatement::Bool, n_sims::Int = 100)
     split = [s.sector for s in abatement_sectors]
     shares = [s.renewable_share for s in abatement_sectors]
     rints = [s.renewable_intensity for s in abatement_sectors]

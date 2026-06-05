@@ -1,15 +1,45 @@
-function cost_push_inflation(firms::AbstractFirms, model::AbstractModel)
+"""
+    average_cost(firms, model)
+
+Per-firm average (unit) cost: the cost of all inputs needed to produce one unit of
+real output, evaluated at current input prices. This is the structural, pre-tax
+cost base — labour, intermediate goods and capital depreciation:
+
+```math
+AC_i = (1 + τ_{SIF}) · w̄_i / ᾱ_i · P̄_{HH}  +  (1/β_i) · Σ_g a_{sg} · P̄_g  +  (δ_i/κ_i) · P̄_{CF}
+```
+
+These are exactly the input-price numerators of the cost-push terms. Model
+extensions add their own cost components on top (e.g. the carbon tax in
+`ModelCarbon`). The growth rate of `AC_i` drives the firm's price; see
+[`cost_push_inflation`](@ref).
+"""
+function average_cost(firms::AbstractFirms, model::AbstractModel)
     P_bar_HH, P_bar_CF, P_bar_g = model.agg.P_bar_HH, model.agg.P_bar_CF, model.agg.P_bar_g
     tau_SIF, a_sg = model.prop.tau_SIF, model.prop.a_sg
 
-    # compute the cost-push inflation
     term = vec(sum(a_sg[:, firms.G_i] .* P_bar_g, dims = 1))
 
-    labour_costs = (1 + tau_SIF) .* firms.w_bar_i ./ firms.alpha_bar_i .* (P_bar_HH ./ firms.P_i .- 1)
-    material_costs = 1 ./ firms.beta_i .* (term ./ firms.P_i .- 1)
-    capital_costs = firms.delta_i ./ firms.kappa_i .* (P_bar_CF ./ firms.P_i .- 1)
-    cost_push_inflation = labour_costs .+ material_costs .+ capital_costs
-    return cost_push_inflation
+    labour_costs = (1 + tau_SIF) .* firms.w_bar_i ./ firms.alpha_bar_i .* P_bar_HH
+    material_costs = 1 ./ firms.beta_i .* term
+    capital_costs = firms.delta_i ./ firms.kappa_i .* P_bar_CF
+    return labour_costs .+ material_costs .+ capital_costs
+end
+
+"""
+    cost_push_inflation(firms, model)
+
+CANVAS cost-push inflation: the growth rate of each firm's own average cost,
+`π_C = AC_i(t) / AC_i(t-1) − 1`. The previous quarter's average cost is read from
+`firms.AC_i_last` (seeded at the calibrated pre-policy cost), and this quarter's
+value is stored back for the next quarter. Called once per step from
+`set_firms_expectations_and_decisions!`, so updating the lag here is safe.
+"""
+function cost_push_inflation(firms::AbstractFirms, model::AbstractModel)
+    AC_now = average_cost(firms, model)
+    pi_c_i = AC_now ./ firms.AC_i_last .- 1
+    firms.AC_i_last .= AC_now  # store for next quarter's ratio
+    return pi_c_i
 end
 
 function desired_capital_material_employment(firms::AbstractFirms, Q_s_i)
@@ -70,8 +100,11 @@ function firms_expectations_and_decisions(model::AbstractModel)
     # cost put inflation
     pi_c_i = cost_push_inflation(firms, model)
 
-    # price setting
-    new_P_i = firms.P_i .* (1 .+ pi_c_i) .* (1 + pi_e)
+    # price setting: under the CANVAS average-cost rule, pi_c_i = AC(t)/AC(t-1) - 1
+    # already carries the inflation trend (AC is built from the economy's price
+    # indices), so the firm passes through its own cost growth directly. Multiplying
+    # by (1 + pi_e) again would double-count inflation and make prices explode.
+    new_P_i = firms.P_i .* (1 .+ pi_c_i)
 
     # target investments in capital, intermediate goods to purchase and employment
     I_d_i, DM_d_i, N_d_i = desired_capital_material_employment(firms, Q_s_i)

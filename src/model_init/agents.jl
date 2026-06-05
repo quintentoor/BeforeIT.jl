@@ -145,6 +145,7 @@ Bit.@object mutable struct Firms(Object) <: AbstractFirms
     const I_h::Vector{Bit.typeFloat}
     const K_h::Vector{Bit.typeFloat}
     const D_h::Vector{Bit.typeFloat}
+    const AC_i_last::Vector{Bit.typeFloat}  # previous-quarter average (unit) cost, for CANVAS cost-push pricing
 end
 
 """
@@ -401,6 +402,11 @@ function (::Type{T})(agents) where {T <: AbstractModel}
 
     # update model variables with global quantities (total income, total deposits) obtained from all the agents
     update_variables_with_totals!(model)
+
+    # seed the lagged average cost with the calibrated (pre-policy) unit cost, so the
+    # first step's cost-push inflation AC(1)/AC(0) - 1 is well-defined (≈ 0 when nothing
+    # has moved yet). Dispatches to the base, carbon-free `average_cost` for every model.
+    model.firms.AC_i_last .= average_cost(model.firms, model)
 
     # initialize data collection
     collect_data!(model)

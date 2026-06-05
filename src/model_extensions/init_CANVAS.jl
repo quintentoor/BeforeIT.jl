@@ -79,6 +79,25 @@ function Bit.firms_expectations_and_decisions(model::Bit.ModelCANVAS)
     return Q_s_i, I_d_i, DM_d_i, N_d_i, Pi_e_i, DL_d_i, K_e_i, L_e_i, new_P_i
 end
 
+# The base `cost_push_inflation` now implements the CANVAS *average-cost growth*
+# rule (π_C = AC(t)/AC(t-1) − 1), which is meant to be used with the price update
+# `P·(1+π_C)` — it already carries the inflation trend. CANVAS keeps the original
+# Poledna et al. cost-vs-own-price gap formula here, because its price update above
+# multiplies by `(1+pi_e)·(1+pi_d_i)`; combining the growth-rule with those factors
+# would double-count inflation and make prices diverge. This override preserves the
+# published CANVAS behaviour.
+function Bit.cost_push_inflation(firms::AbstractFirmsCANVAS, model::Bit.ModelCANVAS)
+    P_bar_HH, P_bar_CF, P_bar_g = model.agg.P_bar_HH, model.agg.P_bar_CF, model.agg.P_bar_g
+    tau_SIF, a_sg = model.prop.tau_SIF, model.prop.a_sg
+
+    term = vec(sum(a_sg[:, firms.G_i] .* P_bar_g, dims = 1))
+
+    labour_costs = (1 + tau_SIF) .* firms.w_bar_i ./ firms.alpha_bar_i .* (P_bar_HH ./ firms.P_i .- 1)
+    material_costs = 1 ./ firms.beta_i .* (term ./ firms.P_i .- 1)
+    capital_costs = firms.delta_i ./ firms.kappa_i .* (P_bar_CF ./ firms.P_i .- 1)
+    return labour_costs .+ material_costs .+ capital_costs
+end
+
 function Bit.central_bank_rate(model::Bit.ModelCANVAS)
     cb = model.cb
     gamma_EA, pi_EA, T_prime, t = model.rotw.gamma_EA, model.rotw.pi_EA, model.prop.T_prime, model.agg.t

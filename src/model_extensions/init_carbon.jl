@@ -239,19 +239,19 @@ function (s::CombinedShock)(model::Bit.AbstractModel)
 end
 
 
-# 1. Price channel: extend cost-push inflation with a carbon term.
+# 1. Price channel: the carbon tax adds `tau_carbon * carbon_intensity_i` to each
+# firm's per-unit cost, so it enters the CANVAS cost-push inflation through the
+# average cost AC_i. While the tax rises (the ramp) dirty firms' costs grow faster
+# → higher π_C → higher prices; once it plateaus the carbon contribution to π_C
+# falls to zero (a constant tax is a one-time level shift, not ongoing inflation).
+# `AC_i_last` is seeded at the pre-policy cost (no carbon), so introducing the tax
+# shows up as a cost increase. Updating the lag here is safe — `cost_push_inflation`
+# is called exactly once per step.
 function Bit.cost_push_inflation(firms::FirmsCarbon, model::ModelCarbon)
-    P_bar_HH, P_bar_CF, P_bar_g = model.agg.P_bar_HH, model.agg.P_bar_CF, model.agg.P_bar_g
-    tau_SIF, a_sg = model.prop.tau_SIF, model.prop.a_sg
-
-    term = vec(sum(a_sg[:, firms.G_i] .* P_bar_g, dims = 1))
-
-    labour_costs = (1 + tau_SIF) .* firms.w_bar_i ./ firms.alpha_bar_i .* (P_bar_HH ./ firms.P_i .- 1)
-    material_costs = 1 ./ firms.beta_i .* (term ./ firms.P_i .- 1)
-    capital_costs = firms.delta_i ./ firms.kappa_i .* (P_bar_CF ./ firms.P_i .- 1)
-    carbon_costs = firms.tau_carbon .* firms.carbon_intensity_i ./ firms.P_i
-
-    return labour_costs .+ material_costs .+ capital_costs .+ carbon_costs
+    AC_now = Bit.average_cost(firms, model) .+ firms.tau_carbon .* firms.carbon_intensity_i
+    pi_c_i = AC_now ./ firms.AC_i_last .- 1
+    firms.AC_i_last .= AC_now  # store for next quarter's ratio
+    return pi_c_i
 end
 
 
