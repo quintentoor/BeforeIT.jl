@@ -8,4 +8,4 @@
 
 include("carbon_extension_common.jl")
 
-display(run_comparison(; abatement = false))
+display(run_comparison(; abatement = false, show_tables = true))

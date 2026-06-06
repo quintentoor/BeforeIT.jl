@@ -9,12 +9,29 @@
 import BeforeIT as Bit
 using Plots, JLD2, Random, Statistics
 
+# Per-graph plotting functions. Each file in `carbon_plots/` defines ONE graph as
+# a function (e.g. `plot_real_gdp`, `plot_unemployment`); `plot_helpers.jl` holds
+# the shared `confidence_band`/`compare_panel`/`quarter_xticks` helpers they use.
+# To add a graph: drop a new file in that folder, `include` it here, and add a
+# call to the `panels = [...]` list in `run_comparison`.
+const CARBON_PLOT_DIR = joinpath(@__DIR__, "carbon_plots")
+include(joinpath(CARBON_PLOT_DIR, "plot_helpers.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_inflation.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_taxes_production.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_emissions.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_unemployment.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_carbon_dividend.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_renewable_share.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_quarterly.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_unemployment_quarterly.jl"))
+
 # Load NL/2015Q1 calibration (matches `examples/basic_example.jl`).
 data = load("data/020_calibration_output/NL/2023Q4_parameters_initial_conditions.jld2")
 parameters = data["parameters"]
 initial_conditions = data["initial_conditions"]
 
-T = 28
+T = 20  # 37 quarters: t=1 → 2024Q1, t=37 → 2033Q1 (initial conditions are 2023Q4)
 G = Int(parameters["G"])
 
 # Trend labour-productivity growth, in % per YEAR (the model steps quarterly).
@@ -23,7 +40,7 @@ G = Int(parameters["G"])
 # `alpha_bar_i` to rise. Applied to BOTH the base and carbon runs (same trend) so
 # the comparison stays clean. Set to 0.0 to recover the original flat-productivity
 # behaviour.
-alpha_growth_annual = 0.01  # +1%/year
+alpha_growth_annual = 0.0154  # +1.54%/year
 
 # CES elasticity of substitution across consumption sectors. Applied to BOTH
 # `Bit.Model` and `Bit.ModelCarbon` below via the shared `parameters` dict.
@@ -36,81 +53,81 @@ parameters["sigma_HH"] = sigma_HH
 # Carbon intensities (tCO2 / € of gross output), NL 2015, BeforeIT 62-sector ordering
 # Source: Eurostat env_ac_ainah_r2 (CO2 emissions) / nama_10_a64 (gross output), base year 2015
 intensity = [
-    0.0002867,   #  1  A01     Crop and animal production
-    0.0003368,   #  2  A02     Forestry and logging
-    0.0006857,   #  3  A03     Fishing and aquaculture
-    0.0001092,   #  4  B       Mining and quarrying
-    0.0000591,   #  5  C10-C12 Food, beverages, tobacco
-    0.0000536,   #  6  C13-C15 Textiles, apparel, leather
-    0.000029,   #  7  C16     Wood
-    0.0001199,   #  8  C17     Paper
-    0.0000199,   #  9  C18     Printing
-    0.0004426,   # 10  C19     Coke and refined petroleum
-    0.0003718,   # 11  C20     Chemicals
-    0.0000169,   # 12  C21     Pharmaceuticals
-    0.0000358,   # 13  C22     Rubber and plastics
-    0.0003641,   # 14  C23     Non-metallic minerals
-    0.00094,   # 15  C24     Basic metals
-    0.0000242,   # 16  C25     Fabricated metals
-    0.0000009,   # 17  C26     Computer/electronic/optical
-    0.0000306,   # 18  C27     Electrical equipment
-    0.0000103,   # 19  C28     Machinery
-    0.0000133,   # 20  C29     Motor vehicles
-    0.0000103,   # 21  C30     Other transport equipment
-    0.0000461,   # 22  C31_C32 Furniture/other manufacturing
-    0.0000238,   # 23  C33     Repair and installation
-    0.002993,   # 24  D       Electricity, gas, steam
-    0.0000156,   # 25  E36     Water
-    0.000365,   # 26  E37-E39 Sewerage, waste
-    0.000039,   # 27  F       Construction
-    0.0000255,   # 28  G45     Motor vehicle trade
-    0.0000236,   # 29  G46     Wholesale
-    0.000034,   # 30  G47     Retail
-    0.0002,   # 31  H49     Land transport
-    0.0008588,   # 32  H50     Water transport
-    0.001198,   # 33  H51     Air transport
-    0.0000278,   # 34  H52     Warehousing
-    0.0000229,   # 35  H53     Postal/courier
-    0.0000424,   # 36  I       Accommodation and food service
-    0.0000051,   # 37  J58     Publishing
-    0.0000033,   # 38  J59_J60 Film/broadcasting
-    0.0000072,   # 39  J61     Telecommunications
-    0.0000042,   # 40  J62_J63 Computer programming/IT
-    0.0000044,   # 41  K64     Financial services
-    0.0000054,   # 42  K65     Insurance/pension
-    0.0000059,   # 43  K66     Auxiliary financial
-    0.000008,   # 44  L       Real estate (excl. imputed)
-    0.0000055,   # 45  M69_M70 Legal/accounting/consultancy
-    0.0000084,   # 46  M71     Architecture/engineering
-    0.000012,   # 47  M72     Scientific R&D
-    0.0000086,   # 48  M73     Advertising/market research
-    0.0000112,   # 49  M74_M75 Other professional
-    0.0000318,   # 50  N77     Rental and leasing
-    0.0000331,   # 51  N78     Employment activities
-    0.0000291,   # 52  N79     Travel agency
-    0.0000438,   # 53  N80-N82 Security/services to buildings
-    0.0000137,   # 54  O       Public administration
-    0.0000141,   # 55  P       Education
-    0.0000149,   # 56  Q86     Human health
-    0.0000257,   # 57  Q87_Q88 Social work
-    0.0000267,   # 58  R90-R92 Creative/arts/cultural
-    0.0000475,   # 59  R93     Sports/recreation
+    0.000413,   #  1  A01     Crop and animal production
+    0.000311,   #  2  A02     Forestry and logging
+    0.001230,   #  3  A03     Fishing and aquaculture
+    0.000201,   #  4  B       Mining and quarrying
+    0.000199,   #  5  C10-C12 Food, beverages, tobacco
+    0.000116,   #  6  C13-C15 Textiles, apparel, leather
+    0.000045,   #  7  C16     Wood
+    0.000170,   #  8  C17     Paper
+    0.000042,   #  9  C18     Printing
+    0.003826,   # 10  C19     Coke and refined petroleum
+    0.002116,   # 11  C20     Chemicals
+    0.000010,   # 12  C21     Pharmaceuticals
+    0.000068,   # 13  C22     Rubber and plastics
+    0.000498,   # 14  C23     Non-metallic minerals
+    0.002518,   # 15  C24     Basic metals
+    0.000049,   # 16  C25     Fabricated metals
+    0.000007,   # 17  C26     Computer/electronic/optical
+    0.000029,   # 18  C27     Electrical equipment
+    0.000012,   # 19  C28     Machinery
+    0.000036,   # 20  C29     Motor vehicles
+    0.000043,   # 21  C30     Other transport equipment
+    0.000070,   # 22  C31_C32 Furniture/other manufacturing
+    0.000037,   # 23  C33     Repair and installation
+    0.001099,   # 24  D       Electricity, gas, steam
+    0.000017,   # 25  E36     Water
+    0.000661,   # 26  E37-E39 Sewerage, waste
+    0.000069,   # 27  F       Construction
+    0.000032,   # 28  G45     Motor vehicle trade
+    0.000024,   # 29  G46     Wholesale
+    0.000028,   # 30  G47     Retail
+    0.000344,   # 31  H49     Land transport
+    0.002055,   # 32  H50     Water transport
+    0.002531,   # 33  H51     Air transport
+    0.000033,   # 34  H52     Warehousing
+    0.000051,   # 35  H53     Postal/courier
+    0.000044,   # 36  I       Accommodation and food service
+    0.000005,   # 37  J58     Publishing
+    0.000003,   # 38  J59_J60 Film/broadcasting
+    0.000007,   # 39  J61     Telecommunications
+    0.000002,   # 40  J62_J63 Computer programming/IT
+    0.000004,   # 41  K64     Financial services
+    0.000005,   # 42  K65     Insurance/pension
+    0.000005,   # 43  K66     Auxiliary financial
+    0.000003,   # 44  L       Real estate (excl. imputed)
+    0.000005,   # 45  M69_M70 Legal/accounting/consultancy
+    0.000008,   # 46  M71     Architecture/engineering
+    0.000011,   # 47  M72     Scientific R&D
+    0.000023,   # 48  M73     Advertising/market research
+    0.000017,   # 49  M74_M75 Other professional
+    0.000031,   # 50  N77     Rental and leasing
+    0.000031,   # 51  N78     Employment activities
+    0.000050,   # 52  N79     Travel agency
+    0.000040,   # 53  N80-N82 Security/services to buildings
+    0.000013,   # 54  O       Public administration
+    0.000011,   # 55  P       Education
+    0.000011,   # 56  Q86     Human health
+    0.000016,   # 57  Q87_Q88 Social work
+    0.000026,   # 58  R90-R92 Creative/arts/cultural
+    0.000061,   # 59  R93     Sports/recreation
     0.000044,   # 60  S94     Membership organisations
-    0.0000264,   # 61  S95     Repair of computers/household goods
-    0.0000317,   # 62  S96     Other personal services
+    0.000031,   # 61  S95     Repair of computers/household goods
+    0.000024,   # 62  S96     Other personal services
 ]
 @assert length(intensity) == 62
 
 # Tax per unit of tCO₂. The carbon run below uses an *incremental* tax that
 # rises by `tau_carbon_increment` every quarter, starting from `tau_carbon_0`.
 tau_carbon_0 = 30
-tau_carbon_increment = 2.64
+tau_carbon_increment = (128 - 30) / 18  # ≈5.444 €/q: ramps 30€→128€ over 4.5y (18 quarters), reaching 128€ at t=19 (2028Q3)
 # Quarter in which the tax first switches on. Quarters before this are tax-free.
-tau_carbon_start = 11
+tau_carbon_start = 1
 # Quarter at which the tax STOPS rising and holds flat (a plateau, not an end
 # date — the tax is still charged after this). Set to `T` for a tax that rises
 # for the whole run; lower it to plateau earlier.
-tau_carbon_final_time = 28
+tau_carbon_final_time = 19  # plateau at 128€ from t=19 (2028Q3) onward; ramp spans 4.5y starting 2024Q1
 # Per-quarter tax path, for context/plotting: 0 before start, then rises and
 # plateaus at final_time.
 tau_carbon_path = [
@@ -150,9 +167,12 @@ unemployment_rate(model) = count(==(0), model.w_act.O_h) / length(model.w_act.O_
 
 
 """
-    run_comparison(; abatement::Bool, n_sims::Int = 5)
+    run_comparison(; abatement::Bool, n_sims::Int = 5, show_tables::Bool = false)
 
 Run the base (no-tax) vs carbon-tax comparison and return the assembled plot.
+
+Pass `show_tables = true` to also print, for every series, a table of its
+cross-run mean against time (the numbers behind the graphs) to the console.
 
 `abatement = true`  → both runs split every sector in `abatement_sectors` into a
 fossil + renewable firm, and the carbon run uses a `CarbonTransition` shock that
@@ -168,10 +188,10 @@ Runs `n_sims` Monte-Carlo repetitions. Each repetition `s` uses a distinct RNG
 seed, so the model's stochasticity shows up as run-to-run variability. Within a
 repetition the base and carbon runs share the SAME seed, so the only difference
 between them is the carbon tax itself — the comparison stays clean per run while
-the band across runs shows the spread. Every panel plots the cross-run mean as a
-line with a ±1 standard-deviation ribbon.
+the band across runs shows estimation uncertainty. Every panel plots the cross-run
+mean as a line with a 95% confidence-interval ribbon (mean ± 1.96·std/√n).
 """
-function run_comparison(; abatement::Bool, n_sims::Int = 100)
+function run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false)
     split = [s.sector for s in abatement_sectors]
     shares = [s.renewable_share for s in abatement_sectors]
     rints = [s.renewable_intensity for s in abatement_sectors]
@@ -220,6 +240,9 @@ function run_comparison(; abatement::Bool, n_sims::Int = 100)
     yg_base = zeros(n_sims);         yg_carbon = zeros(n_sims)
 
     for s in 1:n_sims
+        # Progress indicator so a long Monte-Carlo run shows how far it has got.
+        # `\r` rewrites the same line; `flush` forces it out before the heavy step loop.
+        print("\rRun $s/$n_sims"); flush(stdout)
         # Distinct seed per repetition → run-to-run variability. Base and carbon
         # within a repetition share the seed, so only the tax differs between them.
         Random.seed!(s)
@@ -259,6 +282,7 @@ function run_comparison(; abatement::Bool, n_sims::Int = 100)
         push!(gdp_carbon_v, copy(carbon.data.real_gdp))
         yg_carbon[s] = carbon.gov.Y_G
     end
+    println("\rRun $n_sims/$n_sims — done.")
 
     # Assemble the built-in series into (Td × n_sims) matrices (Td = T+1).
     infl_base = reduce(hcat, infl_base_v);       infl_carbon = reduce(hcat, infl_carbon_v)
@@ -267,72 +291,62 @@ function run_comparison(; abatement::Bool, n_sims::Int = 100)
 
     mode = abatement ? "WITH abatement" : "WITHOUT abatement"
 
-    # Cross-run mean and ±1 std for a (steps × n_sims) matrix. With a single run
-    # the per-element std is undefined, so fall back to a zero ribbon.
-    band(M) = (vec(mean(M; dims = 2)), n_sims > 1 ? vec(std(M; dims = 2)) : zeros(size(M, 1)))
-    # Overlay base (mean ± ribbon) and carbon (mean ± ribbon) on one panel.
-    function compare_panel(Mbase, Mcarbon; kwargs...)
-        mb, sb = band(Mbase)
-        mc, sc = band(Mcarbon)
-        p = plot(1:length(mb), mb; ribbon = sb, fillalpha = 0.2, label = "base (no tax)", kwargs...)
-        plot!(p, 1:length(mc), mc; ribbon = sc, fillalpha = 0.2, label = "carbon")
-        return p
-    end
+    # --- Graphs ----------------------------------------------------------------
+    # Each entry calls one plotting function from `carbon_plots/` (one file per
+    # graph). Comment a line out to hide that graph; uncomment one to show it. The
+    # base-case-only quarterly graphs are commented out by default.
+    panels = [
+        plot_inflation(infl_base, infl_carbon),
+        plot_taxes_production(taxprod_base, taxprod_carbon),
+        plot_emissions(emis_base, emis_carbon),
+        plot_real_gdp(gdp_base, gdp_carbon),
+        plot_unemployment(unemp_base, unemp_carbon),
+        plot_carbon_dividend(lump_carbon),
+        # plot_gdp_growth_quarterly(gdp_base),       # base case only
+        # plot_unemployment_quarterly(unemp_base),   # base case only
+    ]
 
-    p1 = compare_panel(infl_base, infl_carbon; title = "EA inflation", xlabel = "timestep")
-    p2 = compare_panel(taxprod_base, taxprod_carbon; title = "taxes_production", xlabel = "timestep")
-    p3 = compare_panel(
-        emis_base, emis_carbon;
-        title = "total carbon emissions", xlabel = "timestep", ylabel = "Σ intensity_i · Y_i",
-    )
-    p4 = compare_panel(gdp_base, gdp_carbon; title = "real GDP", xlabel = "timestep")
-    p5 = compare_panel(
-        unemp_base, unemp_carbon;
-        title = "unemployment rate", xlabel = "timestep", ylabel = "share of active workers",
-    )
-
-    ml, sl = band(lump_carbon)
-    p6 = plot(
-        1:T, ml; ribbon = sl, fillalpha = 0.2, label = "carbon",
-        title = "carbon dividend per household",
-        xlabel = "timestep", ylabel = "€ per household / quarter",
-    )
-
-    panels = [p1, p2, p3, p4, p5, p6]
-
+    # Renewable-share panel (abatement runs only).
     if abatement
-        # Renewable share of output for each split sector. As the tax raises the
-        # fossil firms' price, the price-weighted matching shifts demand to the
-        # (untaxed) renewable firm — the renewable share rises.
-        p7 = plot(
-            title = "renewable output share (carbon run)",
-            xlabel = "timestep", ylabel = "renewable / sector output", legend = :topleft,
-        )
-        for (k, s) in enumerate(split)
-            mr, sr = band(ren_share[k])
-            plot!(p7, 1:T, mr; ribbon = sr, fillalpha = 0.2, label = "sector $s")
-        end
-        push!(panels, p7)
+        push!(panels, plot_renewable_share(ren_share, split))
     end
+    
 
     println("--- $mode ($n_sims runs) ---")
     println("base   mean gov.Y_G: ", mean(yg_base))
     println("carbon mean gov.Y_G: ", mean(yg_carbon))
     if abatement
         for (k, s) in enumerate(split)
-            mr, _ = band(ren_share[k])
+            mr, _ = confidence_band(ren_share[k])
             println(
                 "mean renewable share of sector $s:  t=1 ", round(mr[1], digits = 3),
                 "   t=$T ", round(mr[end], digits = 3)
             )
         end
     end
-    mb_emis, _ = band(emis_base)
-    mc_emis, _ = band(emis_carbon)
+    mb_emis, _ = confidence_band(emis_base)
+    mc_emis, _ = confidence_band(emis_carbon)
     println(
         "mean total emissions Δ vs base (t=$T): ",
         round(100 * (mc_emis[end] / mb_emis[end] - 1), digits = 2), "%"
     )
+
+    # --- Tables ----------------------------------------------------------------
+    # Optional: print each series' cross-run mean against time (the numbers behind
+    # the graphs). Each `table_*` mirrors a `plot_*` from `carbon_plots/`. Pass
+    # `show_tables = true` to enable; comment a line to drop that table.
+    if show_tables
+        println("\n=== Tables — cross-run mean vs timestep ($mode) ===")
+        table_inflation(infl_base, infl_carbon)
+        table_taxes_production(taxprod_base, taxprod_carbon)
+        table_emissions(emis_base, emis_carbon)
+        table_real_gdp(gdp_base, gdp_carbon)
+        table_unemployment(unemp_base, unemp_carbon)
+        table_carbon_dividend(lump_carbon)
+        # table_gdp_growth_quarterly(gdp_base)        # base case only
+        # table_unemployment_quarterly(unemp_base)    # base case only
+        abatement && table_renewable_share(ren_share, split)
+    end
 
     n = length(panels)
     rows = cld(n, 2)
