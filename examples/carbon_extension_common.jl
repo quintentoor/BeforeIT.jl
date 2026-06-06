@@ -5,7 +5,20 @@
 # `carbon_extension_nab.jl` (disabled). Keeping it here means the carbon-intensity
 # data, the tax path and the list of abatement strategies live in exactly one
 # place. `include("carbon_extension_common.jl")` then call `run_comparison`.
+#=
+Run:
 
+julia --project=examples
+
+include("examples/carbon_extension_common.jl")
+sim = simulate(; abatement = false)
+
+
+And then whichever graphs you want
+
+For example: table_gdp_growth_quarterly(sim.gdp_base)
+(make sure to put sim. in front)
+=#
 import BeforeIT as Bit
 using Plots, JLD2, Random, Statistics
 
@@ -24,14 +37,16 @@ include(joinpath(CARBON_PLOT_DIR, "plot_unemployment.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_carbon_dividend.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_renewable_share.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_quarterly.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_quarterly_sourced.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_unemployment_quarterly.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_unemployment_quarterly_sourced.jl"))
 
-# Load NL/2015Q1 calibration (matches `examples/basic_example.jl`).
+# Load NL/2023Q4 calibration 
 data = load("data/020_calibration_output/NL/2023Q4_parameters_initial_conditions.jld2")
 parameters = data["parameters"]
 initial_conditions = data["initial_conditions"]
 
-T = 20  # 37 quarters: t=1 → 2024Q1, t=37 → 2033Q1 (initial conditions are 2023Q4)
+T = 20  # 20 quarters: t=1 → 2024Q1, t=20 → 2028Q4 (initial conditions are 2023Q4)
 G = Int(parameters["G"])
 
 # Trend labour-productivity growth, in % per YEAR (the model steps quarterly).
@@ -167,12 +182,22 @@ unemployment_rate(model) = count(==(0), model.w_act.O_h) / length(model.w_act.O_
 
 
 """
-    run_comparison(; abatement::Bool, n_sims::Int = 5, show_tables::Bool = false)
+    simulate(; abatement::Bool, n_sims::Int = 100)
 
-Run the base (no-tax) vs carbon-tax comparison and return the assembled plot.
+Run the base (no-tax) vs carbon-tax Monte-Carlo and return the collected data as a
+`NamedTuple`. This is the expensive step — it does NOT plot or print anything.
 
-Pass `show_tables = true` to also print, for every series, a table of its
-cross-run mean against time (the numbers behind the graphs) to the console.
+Hold onto the result and feed its fields to the `plot_*` / `table_*` functions as
+often as you like, WITHOUT re-simulating:
+
+    data = simulate(; abatement = false)              # run the model once (slow)
+    display(plot_real_gdp(data.gdp_base, data.gdp_carbon))   # cheap, repeat freely
+    table_unemployment(data.unemp_base, data.unemp_carbon)
+
+The fields are the `(steps × n_sims)` matrices behind each graph: `infl_*`,
+`taxprod_*`, `emis_*`, `gdp_*`, `unemp_*` (each a `_base`/`_carbon` pair),
+`lump_carbon`, `ren_share` (a vector, one matrix per split sector), `split`,
+`yg_base`/`yg_carbon`, and the bookkeeping `abatement`/`n_sims`/`mode`.
 
 `abatement = true`  → both runs split every sector in `abatement_sectors` into a
 fossil + renewable firm, and the carbon run uses a `CarbonTransition` shock that
@@ -188,10 +213,10 @@ Runs `n_sims` Monte-Carlo repetitions. Each repetition `s` uses a distinct RNG
 seed, so the model's stochasticity shows up as run-to-run variability. Within a
 repetition the base and carbon runs share the SAME seed, so the only difference
 between them is the carbon tax itself — the comparison stays clean per run while
-the band across runs shows estimation uncertainty. Every panel plots the cross-run
+the band across runs shows estimation uncertainty. Each `plot_*` shows the cross-run
 mean as a line with a 95% confidence-interval ribbon (mean ± 1.96·std/√n).
 """
-function run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false)
+function simulate(; abatement::Bool, n_sims::Int = 100)
     split = [s.sector for s in abatement_sectors]
     shares = [s.renewable_share for s in abatement_sectors]
     rints = [s.renewable_intensity for s in abatement_sectors]
@@ -259,9 +284,8 @@ function run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool 
         yg_base[s] = base.gov.Y_G
 
         # Carbon run: same seed. Construct tax-free — the shock sets `tau_carbon`
-        # every step (zero before `tau_carbon_start`), so the initial rate is
-        # irrelevant for the simulated steps and no carbon slug leaks into the
-        # initial data point.
+        # every step (zero before `tau_carbon_start`), so no carbon slug leaks into
+        # the initial data point.
         Random.seed!(s)
         carbon = make_model(0.0)
         # Firm indices per split sector, for the technology-mix panel (abatement only).
@@ -291,19 +315,56 @@ function run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool 
 
     mode = abatement ? "WITH abatement" : "WITHOUT abatement"
 
+    # Everything a `plot_*` / `table_*` needs, so callers can re-render without
+    # re-simulating. Extra fields are harmless — destructure only what you use.
+    return (;
+        abatement, n_sims, mode, split,
+        infl_base, infl_carbon,
+        taxprod_base, taxprod_carbon,
+        emis_base, emis_carbon,
+        gdp_base, gdp_carbon,
+        unemp_base, unemp_carbon,
+        lump_carbon, ren_share,
+        yg_base, yg_carbon,
+    )
+end
+
+"""
+    run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false)
+
+Convenience wrapper around [`simulate`](@ref): run the model, assemble the combined
+plot, optionally print the tables, and return the plot (so `display(...)` works).
+
+Pass `show_tables = true` to also print, for every series, a table of its cross-run
+mean against time (the numbers behind the graphs) to the console.
+
+To explore different graphs/tables WITHOUT re-running the model, call `simulate`
+yourself once and reuse its returned data — see the `simulate` docstring.
+"""
+function run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false)
+    data = simulate(; abatement, n_sims)
+    (;
+        infl_base, infl_carbon, taxprod_base, taxprod_carbon,
+        emis_base, emis_carbon, gdp_base, gdp_carbon,
+        unemp_base, unemp_carbon, lump_carbon, ren_share,
+        split, mode, yg_base, yg_carbon,
+    ) = data
+
     # --- Graphs ----------------------------------------------------------------
     # Each entry calls one plotting function from `carbon_plots/` (one file per
     # graph). Comment a line out to hide that graph; uncomment one to show it. The
     # base-case-only quarterly graphs are commented out by default.
     panels = [
-        plot_inflation(infl_base, infl_carbon),
-        plot_taxes_production(taxprod_base, taxprod_carbon),
-        plot_emissions(emis_base, emis_carbon),
-        plot_real_gdp(gdp_base, gdp_carbon),
-        plot_unemployment(unemp_base, unemp_carbon),
-        plot_carbon_dividend(lump_carbon),
+        # plot_inflation(infl_base, infl_carbon),
+        # plot_taxes_production(taxprod_base, taxprod_carbon),
+        # plot_emissions(emis_base, emis_carbon),
+        # plot_real_gdp(gdp_base, gdp_carbon),
+        # plot_unemployment(unemp_base, unemp_carbon),
+        # plot_carbon_dividend(lump_carbon),
+        # plot_gdp_growth_quarterly_sourced(gdp_base),  # base case + overlaid "Sourced data" line
         # plot_gdp_growth_quarterly(gdp_base),       # base case only
         # plot_unemployment_quarterly(unemp_base),   # base case only
+        # plot_unemployment_quarterly_sourced(unemp_base),  # base case + overlaid "Sourced data" line
     ]
 
     # Renewable-share panel (abatement runs only).
