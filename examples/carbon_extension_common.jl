@@ -182,7 +182,7 @@ unemployment_rate(model) = count(==(0), model.w_act.O_h) / length(model.w_act.O_
 
 
 """
-    simulate(; abatement::Bool, n_sims::Int = 100)
+    simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0)
 
 Run the base (no-tax) vs carbon-tax Monte-Carlo and return the collected data as a
 `NamedTuple`. This is the expensive step — it does NOT plot or print anything.
@@ -209,6 +209,16 @@ fall both by switching technology and by reduced demand.
 fall only through reduced output/demand. This isolates the pure tax effect and is
 the cleaner control for judging how much the abatement channel is doing.
 
+`carbon_efficiency_annual` (OPTIONAL robustness knob, default `0.0` = off) sets a
+trend decline in every sector's CO₂ intensity, in % per YEAR (applied in quarterly
+steps via `Bit.CarbonEfficiency`). Empirically Dutch total emissions fall over time
+even as output grows, because industries get cleaner per unit of output; the base
+model holds intensities fixed, so set this > 0 (e.g. `0.04` → −4%/year) to steer
+the base-case emission path down toward that observed decline. It is applied
+identically to BOTH the base and carbon runs, so the carbon-vs-base comparison
+still isolates the tax. The main comparison uses `0.0`; this is purely a
+robustness check.
+
 Runs `n_sims` Monte-Carlo repetitions. Each repetition `s` uses a distinct RNG
 seed, so the model's stochasticity shows up as run-to-run variability. Within a
 repetition the base and carbon runs share the SAME seed, so the only difference
@@ -216,7 +226,7 @@ between them is the carbon tax itself — the comparison stays clean per run whi
 the band across runs shows estimation uncertainty. Each `plot_*` shows the cross-run
 mean as a line with a 95% confidence-interval ribbon (mean ± 1.96·std/√n).
 """
-function simulate(; abatement::Bool, n_sims::Int = 100)
+function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0)
     split = [s.sector for s in abatement_sectors]
     shares = [s.renewable_share for s in abatement_sectors]
     rints = [s.renewable_intensity for s in abatement_sectors]
@@ -239,6 +249,14 @@ function simulate(; abatement::Bool, n_sims::Int = 100)
     # carbon run is the tax itself (isolates the policy effect).
     # Trend productivity growth, applied identically to both runs.
     growth = Bit.ProductivityGrowth(alpha_growth_annual)
+    # OPTIONAL carbon-efficiency trend (robustness knob). With rate 0.0 this is a
+    # no-op; > 0 makes every sector's CO₂ intensity decline by that fraction per
+    # year (quarterly steps), steering the base-case emissions down toward the
+    # observed Dutch decline. Applied to BOTH runs so the tax comparison stays clean.
+    efficiency = Bit.CarbonEfficiency(carbon_efficiency_annual)
+    # The trend shocks every run shares (productivity + efficiency); the base run
+    # gets exactly these, the carbon run adds the tax on top.
+    base_shock! = Bit.CombinedShock(growth, efficiency)
 
     ramp = Bit.CarbonTaxRamp(
         tau_carbon_0, tau_carbon_increment;
@@ -246,9 +264,9 @@ function simulate(; abatement::Bool, n_sims::Int = 100)
     )
     # With abatement, the transition shock also reallocates capacity toward the
     # renewable firms; without, the tax just ramps. Either way, combine it with the
-    # same productivity-growth trend used in the base run.
+    # same productivity-growth and efficiency trends used in the base run.
     carbon_shock = abatement ? Bit.CarbonTransition(ramp, split; rate = 0.3, max_step = 0.1) : ramp
-    shock! = Bit.CombinedShock(growth, carbon_shock)
+    shock! = Bit.CombinedShock(growth, efficiency, carbon_shock)
 
     # Monte-Carlo storage: one column per repetition, one row per timestep. The
     # hand-tracked series (emissions/unemployment/dividend/renewable share) are
@@ -273,7 +291,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100)
         Random.seed!(s)
         base = make_model(0.0)
         for t in 1:T
-            Bit.step!(base; parallel = true, shock! = growth)
+            Bit.step!(base; parallel = true, shock! = base_shock!)
             Bit.collect_data!(base)
             emis_base[t, s] = emissions(base)
             unemp_base[t, s] = unemployment_rate(base)
@@ -330,7 +348,8 @@ function simulate(; abatement::Bool, n_sims::Int = 100)
 end
 
 """
-    run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false)
+    run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false,
+                   carbon_efficiency_annual::Real = 0.0)
 
 Convenience wrapper around [`simulate`](@ref): run the model, assemble the combined
 plot, optionally print the tables, and return the plot (so `display(...)` works).
@@ -338,11 +357,18 @@ plot, optionally print the tables, and return the plot (so `display(...)` works)
 Pass `show_tables = true` to also print, for every series, a table of its cross-run
 mean against time (the numbers behind the graphs) to the console.
 
+Pass `carbon_efficiency_annual > 0` to enable the optional carbon-efficiency trend
+(see [`simulate`](@ref)) — a robustness check that bends the base-case emissions
+path down toward the observed Dutch decline. Defaults to `0.0` (off).
+
 To explore different graphs/tables WITHOUT re-running the model, call `simulate`
 yourself once and reuse its returned data — see the `simulate` docstring.
 """
-function run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false)
-    data = simulate(; abatement, n_sims)
+function run_comparison(;
+        abatement::Bool, n_sims::Int = 100, show_tables::Bool = false,
+        carbon_efficiency_annual::Real = 0.0,
+    )
+    data = simulate(; abatement, n_sims, carbon_efficiency_annual)
     (;
         infl_base, infl_carbon, taxprod_base, taxprod_carbon,
         emis_base, emis_carbon, gdp_base, gdp_carbon,

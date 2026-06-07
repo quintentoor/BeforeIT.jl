@@ -171,6 +171,46 @@ using Test
         @test isapprox(zero5, 0.0, atol = 1.0e-8)
     end
 
+    # Carbon-efficiency trend — `CarbonEfficiency` must scale every firm's CO₂
+    # intensity down by a fixed annual rate (in quarterly steps), be a no-op at
+    # rate 0, and — uniform scaling — preserve the dirty/clean ranking.
+    @testset "CarbonEfficiency declines carbon intensity" begin
+        intensity = ones(Float64, G)
+        intensity[1] = 5.0  # sector 1 visibly dirtier, to check ranking is preserved
+        rate = 0.04         # −4%/year
+
+        Random.seed!(55)
+        model = Bit.ModelCarbon(
+            parameters, initial_conditions; tau_carbon = 0.0, carbon_intensity_s = intensity,
+        )
+        ci0 = copy(model.firms.carbon_intensity_i)
+        eff = Bit.CarbonEfficiency(rate)
+        for _ in 1:T
+            Bit.step!(model; parallel = false, shock! = eff)
+            Bit.collect_data!(model)
+        end
+        # Applied at t = 1..T → T quarterly multiplications. After exactly 4
+        # quarters intensities are down by `rate`; here T == 4.
+        qf = (1 - rate)^(1 / 4)
+        @test isapprox(model.firms.carbon_intensity_i, ci0 .* qf^T; rtol = 1.0e-12)
+        @test isapprox(model.firms.carbon_intensity_i, ci0 .* (1 - rate); rtol = 1.0e-12)
+        # Uniform scaling preserves the relative ranking of firms' intensities.
+        @test sortperm(model.firms.carbon_intensity_i) == sortperm(ci0)
+
+        # Rate 0 is a no-op: intensities are untouched after stepping.
+        Random.seed!(55)
+        flat = Bit.ModelCarbon(
+            parameters, initial_conditions; tau_carbon = 0.0, carbon_intensity_s = intensity,
+        )
+        ci0_flat = copy(flat.firms.carbon_intensity_i)
+        noop = Bit.CarbonEfficiency(0.0)
+        for _ in 1:T
+            Bit.step!(flat; parallel = false, shock! = noop)
+            Bit.collect_data!(flat)
+        end
+        @test flat.firms.carbon_intensity_i == ci0_flat
+    end
+
     # Multi-sector split — splitting several sectors must append one renewable
     # firm per sector, preserve each split sector's initial emissions, and let a
     # multi-sector `CarbonTransition` raise every renewable firm's output share.

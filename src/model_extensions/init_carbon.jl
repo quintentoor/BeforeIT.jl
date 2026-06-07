@@ -216,6 +216,51 @@ end
 
 
 """
+    CarbonEfficiency(annual_rate; start_time = 1, final_time = typemax(Int))
+
+Trend carbon-efficiency improvement, applied as a `step!` shock. The model runs
+quarterly, so each quarter `t` in `[start_time, final_time]` this multiplies every
+firm's CO₂ intensity `carbon_intensity_i` by the quarterly factor
+`(1 - annual_rate)^(1/4)`. Intensities therefore decline by exactly `annual_rate`
+per year (e.g. `0.04` → −4%/year), compounding quarterly.
+
+Why this matters: empirically, Dutch total CO₂ emissions fall over time even as
+real output grows, because industries get cleaner per unit of output (fuel
+switching, electrification, process improvements). The base model holds
+`carbon_intensity_i` fixed, so its emissions only ever track output. This shock
+adds an exogenous efficiency trend, letting the base-case emission path be steered
+down to match the observed decline — useful as a robustness check. It is OPTIONAL:
+with `annual_rate = 0` it is a no-op and the original constant-intensity behaviour
+is recovered exactly.
+
+Because it scales every firm's intensity by the *same* factor, it leaves the
+relative ranking of dirty/clean firms unchanged (so the abatement reallocation in
+[`reallocate_green_capacity!`](@ref) is unaffected), and with `tau_carbon == 0` it
+changes only the tracked emissions, not prices. Runs at the top of `step!` (before
+firms set prices and decisions), so the reduced intensity feeds that quarter's
+emissions and — when a tax is on — its cost-push pricing. Compose it with the
+productivity and carbon shocks via [`CombinedShock`](@ref).
+"""
+struct CarbonEfficiency <: Bit.AbstractShock
+    quarterly_factor::Bit.typeFloat
+    start_time::Int
+    final_time::Int
+end
+function CarbonEfficiency(annual_rate; start_time::Integer = 1, final_time::Integer = typemax(Int))
+    qf = (one(Bit.typeFloat) - Bit.typeFloat(annual_rate))^(one(Bit.typeFloat) / 4)
+    return CarbonEfficiency(qf, Int(start_time), Int(final_time))
+end
+
+function (s::CarbonEfficiency)(model::ModelCarbon)
+    t = model.agg.t
+    if s.start_time <= t <= s.final_time
+        model.firms.carbon_intensity_i .*= s.quarterly_factor
+    end
+    return nothing
+end
+
+
+"""
     CombinedShock(shocks...)
 
 Apply several `step!` shocks in sequence within each quarter, in the order given.
