@@ -5,9 +5,11 @@
 # `ren_share` is a vector of (T × n_sims) matrices, one per split sector; `split`
 # is the matching vector of sector indices, used only for the legend labels.
 function plot_renewable_share(ren_share, split)
+    T = isempty(ren_share) ? 0 : size(ren_share[1], 1)
     p = plot(
         title = "renewable output share (carbon run)",
-        xlabel = "timestep", ylabel = "renewable / sector output", legend = :topleft,
+        xlabel = "quarter", ylabel = "renewable / sector output", legend = :topleft,
+        xticks = quarter_xticks(T), xrotation = 45,
     )
     for (k, s) in enumerate(split)
         mr, sr = confidence_band(ren_share[k])

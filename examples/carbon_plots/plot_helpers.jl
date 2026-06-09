@@ -19,24 +19,39 @@ function confidence_band(M)
     )
 end
 
-# Overlay base (mean ± ribbon) and carbon (mean ± ribbon) on one panel. Each
-# argument is a (steps × n_sims) matrix; extra `kwargs` (title, xlabel, …) are
-# forwarded to the underlying `plot` call.
-function compare_panel(Mbase, Mcarbon; kwargs...)
+# Overlay base (mean ± ribbon) and carbon (mean ± ribbon) on one panel, on the
+# shared per-quarter x-axis. Each argument is a (steps × n_sims) matrix; extra
+# `kwargs` (title, ylabel, …) are forwarded to the underlying `plot` call and
+# override the quarter-axis defaults if a caller passes them.
+#
+# `start_q0` is the calendar quarter at x = 1, counted in quarters from 2024Q1.
+# The built-in model series (inflation, taxes_production, real GDP) carry an
+# initial 2023Q4 point as row 1, so they use the default `-1`; hand-tracked series
+# that already start at 2024Q1 (e.g. emissions) pass `start_q0 = 0`.
+function compare_panel(Mbase, Mcarbon; start_q0 = -1, kwargs...)
     mb, sb = confidence_band(Mbase)
     mc, sc = confidence_band(Mcarbon)
-    p = plot(1:length(mb), mb; ribbon = sb, fillalpha = 0.2, label = "base (no tax)", kwargs...)
+    n = length(mb)
+    defaults = (; xlabel = "quarter", xticks = quarter_xticks(n; start_q0), xrotation = 45)
+    p = plot(1:n, mb; ribbon = sb, fillalpha = 0.2, label = "base (no tax)", defaults..., kwargs...)
     plot!(p, 1:length(mc), mc; ribbon = sc, fillalpha = 0.2, label = "carbon")
     return p
 end
 
-# x-axis ticks for a `T`-quarter run starting at 2024Q1, showing one tick per
-# year (2024Q1, 2025Q1, …) so the axis stays readable. Returns a value suitable
-# for `xticks =`. Pair with `xrotation = 45` so the labels don't overlap.
-function quarter_xticks(T)
-    labels = [string(2024 + (t - 1) ÷ 4, "Q", (t - 1) % 4 + 1) for t in 1:T]
-    idx = 1:4:T
-    return (collect(idx), labels[idx])
+# x-axis ticks for an `n`-point quarterly series, showing one tick per year on the
+# year-end quarter (e.g. 2024Q4, 2025Q4, …) so the axis stays readable and the
+# final simulated quarter (2028Q4 in the standard 20-quarter run) lands exactly on
+# a tick. Returns a value suitable for `xticks =`. Pair with `xrotation = 45` so
+# the labels don't overlap.
+#
+# `start_q0` is the calendar quarter at x = 1, counted in quarters from 2024Q1:
+# `0` → 2024Q1 (the default; series that start at the first simulated quarter),
+# `-1` → 2023Q4 (series that carry an initial point as row 1). Ticks are placed on
+# every Q4 regardless of the offset.
+function quarter_xticks(n; start_q0 = 0)
+    label(t) = (o = start_q0 + (t - 1); string(2024 + fld(o, 4), "Q", mod(o, 4) + 1))
+    idx = (mod(3 - start_q0, 4) + 1):4:n  # first Q4 on the axis, then one per year
+    return (collect(idx), [label(t) for t in idx])
 end
 
 # Pretty-print a table of cross-run MEANS against time — the numeric counterpart

@@ -32,9 +32,19 @@ include(joinpath(CARBON_PLOT_DIR, "plot_helpers.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_inflation.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_taxes_production.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_emissions.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_emissions_diff.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_emissions_stacked.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_sector_prod_price.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_employment_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_diff.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_consumption.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_consumption_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_unemployment.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_unemployment_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_carbon_dividend.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_cpi.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_cpi_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_renewable_share.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_quarterly.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_quarterly_sourced.jl"))
@@ -133,6 +143,75 @@ intensity = [
 ]
 @assert length(intensity) == 62
 
+# Human-readable label per sector, in the SAME 62-sector ordering as `intensity`
+# above (NACE code + short name). Used to label the stacked per-sector emissions
+# graph; the index into this vector is the model's sector index `G_i`.
+sector_labels = [
+    "A01 Crop & animal prod.",          #  1
+    "A02 Forestry & logging",           #  2
+    "A03 Fishing & aquaculture",        #  3
+    "B Mining & quarrying",             #  4
+    "C10-12 Food/bev/tobacco",          #  5
+    "C13-15 Textiles/apparel",          #  6
+    "C16 Wood",                         #  7
+    "C17 Paper",                        #  8
+    "C18 Printing",                     #  9
+    "C19 Coke & refined petrol.",       # 10
+    "C20 Chemicals",                    # 11
+    "C21 Pharmaceuticals",              # 12
+    "C22 Rubber & plastics",            # 13
+    "C23 Non-metallic minerals",        # 14
+    "C24 Basic metals",                 # 15
+    "C25 Fabricated metals",            # 16
+    "C26 Computer/electronic",          # 17
+    "C27 Electrical equipment",         # 18
+    "C28 Machinery",                    # 19
+    "C29 Motor vehicles",               # 20
+    "C30 Other transport equip.",       # 21
+    "C31-32 Furniture/other mfg",       # 22
+    "C33 Repair & installation",        # 23
+    "D Electricity, gas, steam",        # 24
+    "E36 Water",                        # 25
+    "E37-39 Sewerage, waste",           # 26
+    "F Construction",                   # 27
+    "G45 Motor vehicle trade",          # 28
+    "G46 Wholesale",                    # 29
+    "G47 Retail",                       # 30
+    "H49 Land transport",               # 31
+    "H50 Water transport",              # 32
+    "H51 Air transport",                # 33
+    "H52 Warehousing",                  # 34
+    "H53 Postal/courier",               # 35
+    "I Accommodation & food",           # 36
+    "J58 Publishing",                   # 37
+    "J59-60 Film/broadcasting",         # 38
+    "J61 Telecommunications",           # 39
+    "J62-63 IT/programming",            # 40
+    "K64 Financial services",           # 41
+    "K65 Insurance/pension",            # 42
+    "K66 Auxiliary financial",          # 43
+    "L Real estate",                    # 44
+    "M69-70 Legal/consultancy",         # 45
+    "M71 Architecture/eng.",            # 46
+    "M72 Scientific R&D",               # 47
+    "M73 Advertising/mkt res.",         # 48
+    "M74-75 Other professional",        # 49
+    "N77 Rental & leasing",             # 50
+    "N78 Employment activities",        # 51
+    "N79 Travel agency",                # 52
+    "N80-82 Security/bldg svc.",        # 53
+    "O Public administration",          # 54
+    "P Education",                      # 55
+    "Q86 Human health",                 # 56
+    "Q87-88 Social work",               # 57
+    "R90-92 Creative/arts",             # 58
+    "R93 Sports/recreation",            # 59
+    "S94 Membership orgs",              # 60
+    "S95 Repair comp./household",       # 61
+    "S96 Other personal svc.",          # 62
+]
+@assert length(sector_labels) == 62
+
 # Tax per unit of tCO₂. The carbon run below uses an *incremental* tax that
 # rises by `tau_carbon_increment` every quarter, starting from `tau_carbon_0`.
 tau_carbon_0 = 30
@@ -173,6 +252,55 @@ abatement_sectors = [
 # its sector intensity.
 emissions(model) = sum(model.firms.carbon_intensity_i .* model.firms.Y_i)
 
+# Same emissions, broken down BY SECTOR: returns a length-`ng` vector where entry
+# `g` is Σ_{firms i in sector g} intensity_i·Y_i. `model.firms.G_i[i]` is firm i's
+# sector index (1..ng), so we just scatter-add each firm's emissions into its
+# sector's bucket. Summing this vector reproduces `emissions(model)` exactly. With
+# abatement, a split sector's renewable firm keeps the original sector index, so it
+# folds back into the same bucket — the breakdown still has `ng` entries.
+function emissions_by_sector(model, ng)
+    e = zeros(ng)
+    @inbounds for i in eachindex(model.firms.Y_i)
+        e[model.firms.G_i[i]] += model.firms.carbon_intensity_i[i] * model.firms.Y_i[i]
+    end
+    return e
+end
+
+# Per-sector cross-firm AVERAGES, returned as a `(mean_production, mean_price)`
+# pair of length-`ng` vectors: entry `g` averages firm production `Y_i` and firm
+# selling price `P_i` over the firms in sector `g` (`firms.G_i == g`). Every sector
+# has ≥1 firm so the counts are never zero; with abatement a split sector's fossil
+# + renewable firms share the index, so the average spans both. (The model also
+# keeps a sales-weighted sector price index `agg.P_bar_g` that folds in import
+# prices — use that instead if you want the official producer-price index rather
+# than the plain average of domestic firms' selling prices.)
+function sector_averages(model, ng)
+    sumY = zeros(ng); sumP = zeros(ng); cnt = zeros(Int, ng)
+    G_i = model.firms.G_i
+    @inbounds for i in eachindex(G_i)
+        g = G_i[i]
+        sumY[g] += model.firms.Y_i[i]
+        sumP[g] += model.firms.P_i[i]
+        cnt[g] += 1
+    end
+    return (sumY ./ cnt, sumP ./ cnt)
+end
+
+# Employment BY SECTOR: returns a length-`ng` vector where entry `g` is the total
+# number of persons employed across the firms in sector `g`. `model.firms.N_i[i]` is
+# firm i's headcount and `model.firms.G_i[i]` its sector index (1..ng), so we just
+# scatter-add each firm's headcount into its sector's bucket — exactly mirroring
+# `emissions_by_sector`. Summing this vector gives the economy-wide number of
+# employed persons. With abatement a split sector's fossil + renewable firms share
+# the index, so they fold back into the same bucket.
+function employment_by_sector(model, ng)
+    n = zeros(ng)
+    @inbounds for i in eachindex(model.firms.N_i)
+        n[model.firms.G_i[i]] += model.firms.N_i[i]
+    end
+    return n
+end
+
 # Lump-sum carbon dividend recycled to each household this quarter, in euros.
 carbon_dividend(model) =
     sum(model.firms.tau_carbon .* model.firms.carbon_intensity_i .* model.firms.Y_i) / model.prop.H
@@ -198,6 +326,16 @@ The fields are the `(steps × n_sims)` matrices behind each graph: `infl_*`,
 `taxprod_*`, `emis_*`, `gdp_*`, `unemp_*` (each a `_base`/`_carbon` pair),
 `lump_carbon`, `ren_share` (a vector, one matrix per split sector), `split`,
 `yg_base`/`yg_carbon`, and the bookkeeping `abatement`/`n_sims`/`mode`.
+
+A few extra fields are `(steps × G × n_sims)` per-sector arrays (`G = 62`):
+`emis_base_sec` (base-case emissions split by sector — summing over the sector
+dimension recovers `emis_base`; feeds `plot_emissions_stacked` /
+`table_emissions_stacked`), `prod_*_sec` / `price_*_sec` (each a `_base`/
+`_carbon` pair) holding the cross-firm AVERAGE production `Y_i` and selling price
+`P_i` per sector, feeding `table_production_sector` / `table_price_sector`, and
+`emp_*_sec` (a `_base`/`_carbon` pair) holding the number of persons employed
+(`firms.N_i`) per sector — summing over the sector dimension gives total
+economy-wide employment.
 
 `abatement = true`  → both runs split every sector in `abatement_sectors` into a
 fossil + renewable firm, and the carbon run uses a `CarbonTransition` shock that
@@ -274,12 +412,22 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     # length T+1 (they carry an initial point), so collect those as vectors per
     # repetition and hcat afterwards — their own length is used on the x-axis.
     emis_base = zeros(T, n_sims);    emis_carbon = zeros(T, n_sims)
+    emis_base_sec = zeros(T, G, n_sims)  # base-case per-sector emissions, for the stacked graph
+    # Per-sector cross-firm averages of production (Y_i) and selling price (P_i),
+    # tracked for both runs so the carbon tax's per-sector effect can be compared.
+    prod_base_sec = zeros(T, G, n_sims);  prod_carbon_sec = zeros(T, G, n_sims)
+    price_base_sec = zeros(T, G, n_sims); price_carbon_sec = zeros(T, G, n_sims)
+    # Per-sector employment (number of persons employed), tracked for both runs so
+    # the carbon tax's effect on the sectoral distribution of jobs can be compared.
+    emp_base_sec = zeros(T, G, n_sims);   emp_carbon_sec = zeros(T, G, n_sims)
     unemp_base = zeros(T, n_sims);   unemp_carbon = zeros(T, n_sims)
+    cpi_base = zeros(T, n_sims);     cpi_carbon = zeros(T, n_sims)  # household CPI = agg.P_bar_HH
     lump_carbon = zeros(T, n_sims)
     ren_share = [zeros(T, n_sims) for _ in split]  # renewable share of each split sector's output
     infl_base_v = Vector{Float64}[];    infl_carbon_v = Vector{Float64}[]
     taxprod_base_v = Vector{Float64}[]; taxprod_carbon_v = Vector{Float64}[]
     gdp_base_v = Vector{Float64}[];     gdp_carbon_v = Vector{Float64}[]
+    cons_base_v = Vector{Float64}[];    cons_carbon_v = Vector{Float64}[]
     yg_base = zeros(n_sims);         yg_carbon = zeros(n_sims)
 
     for s in 1:n_sims
@@ -294,11 +442,16 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
             Bit.step!(base; parallel = true, shock! = base_shock!)
             Bit.collect_data!(base)
             emis_base[t, s] = emissions(base)
+            emis_base_sec[t, :, s] = emissions_by_sector(base, G)
+            prod_base_sec[t, :, s], price_base_sec[t, :, s] = sector_averages(base, G)
+            emp_base_sec[t, :, s] = employment_by_sector(base, G)
             unemp_base[t, s] = unemployment_rate(base)
+            cpi_base[t, s] = base.agg.P_bar_HH
         end
         push!(infl_base_v, copy(base.data.gdp_deflator_growth_ea))
         push!(taxprod_base_v, copy(base.data.taxes_production))
         push!(gdp_base_v, copy(base.data.real_gdp))
+        push!(cons_base_v, copy(base.data.real_household_consumption))
         yg_base[s] = base.gov.Y_G
 
         # Carbon run: same seed. Construct tax-free — the shock sets `tau_carbon`
@@ -312,7 +465,10 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
             Bit.step!(carbon; parallel = true, shock! = shock!)
             Bit.collect_data!(carbon)
             emis_carbon[t, s] = emissions(carbon)
+            prod_carbon_sec[t, :, s], price_carbon_sec[t, :, s] = sector_averages(carbon, G)
+            emp_carbon_sec[t, :, s] = employment_by_sector(carbon, G)
             unemp_carbon[t, s] = unemployment_rate(carbon)
+            cpi_carbon[t, s] = carbon.agg.P_bar_HH
             lump_carbon[t, s] = carbon_dividend(carbon)
             for (k, idx) in enumerate(sector_idx)
                 yr = carbon.firms.Y_i[idx[end]]
@@ -322,6 +478,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
         push!(infl_carbon_v, copy(carbon.data.gdp_deflator_growth_ea))
         push!(taxprod_carbon_v, copy(carbon.data.taxes_production))
         push!(gdp_carbon_v, copy(carbon.data.real_gdp))
+        push!(cons_carbon_v, copy(carbon.data.real_household_consumption))
         yg_carbon[s] = carbon.gov.Y_G
     end
     println("\rRun $n_sims/$n_sims — done.")
@@ -330,18 +487,23 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     infl_base = reduce(hcat, infl_base_v);       infl_carbon = reduce(hcat, infl_carbon_v)
     taxprod_base = reduce(hcat, taxprod_base_v); taxprod_carbon = reduce(hcat, taxprod_carbon_v)
     gdp_base = reduce(hcat, gdp_base_v);         gdp_carbon = reduce(hcat, gdp_carbon_v)
+    cons_base = reduce(hcat, cons_base_v);       cons_carbon = reduce(hcat, cons_carbon_v)
 
     mode = abatement ? "WITH abatement" : "WITHOUT abatement"
 
     # Everything a `plot_*` / `table_*` needs, so callers can re-render without
     # re-simulating. Extra fields are harmless — destructure only what you use.
     return (;
-        abatement, n_sims, mode, split,
+        abatement, n_sims, mode, split, sector_labels,
         infl_base, infl_carbon,
         taxprod_base, taxprod_carbon,
-        emis_base, emis_carbon,
+        emis_base, emis_carbon, emis_base_sec,
+        prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
+        emp_base_sec, emp_carbon_sec,
         gdp_base, gdp_carbon,
+        cons_base, cons_carbon,
         unemp_base, unemp_carbon,
+        cpi_base, cpi_carbon,
         lump_carbon, ren_share,
         yg_base, yg_carbon,
     )
@@ -371,8 +533,12 @@ function run_comparison(;
     data = simulate(; abatement, n_sims, carbon_efficiency_annual)
     (;
         infl_base, infl_carbon, taxprod_base, taxprod_carbon,
-        emis_base, emis_carbon, gdp_base, gdp_carbon,
-        unemp_base, unemp_carbon, lump_carbon, ren_share,
+        emis_base, emis_carbon, emis_base_sec,
+        prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
+        emp_carbon_sec,
+        gdp_base, gdp_carbon,
+        cons_base, cons_carbon,
+        unemp_base, unemp_carbon, cpi_base, cpi_carbon, lump_carbon, ren_share,
         split, mode, yg_base, yg_carbon,
     ) = data
 
@@ -384,8 +550,22 @@ function run_comparison(;
         # plot_inflation(infl_base, infl_carbon),
         # plot_taxes_production(taxprod_base, taxprod_carbon),
         # plot_emissions(emis_base, emis_carbon),
+        # plot_emissions_diff(emis_base, emis_carbon),  # carbon emissions as % vs base
+        # plot_emissions_stacked(emis_base_sec, sector_labels),  # base-case total, stacked by sector
+        # plot_production_sector(prod_base_sec, prod_carbon_sec, sector_labels),  # avg output/sector, base vs carbon
+        # plot_price_sector(price_base_sec, price_carbon_sec, sector_labels),     # avg price/sector, base vs carbon
+        # plot_price_polluters(price_carbon_sec, emis_base_sec),  # carbon price: top-8 polluters vs rest (grouped)
+        # plot_production_polluters(prod_carbon_sec, emis_base_sec),  # carbon production, indexed: top-8 polluters vs rest
+        # plot_employment_polluters(emp_carbon_sec, emis_base_sec),  # carbon employment, indexed: top-8 polluters vs rest
+
         # plot_real_gdp(gdp_base, gdp_carbon),
+        # plot_real_gdp_diff(gdp_base, gdp_carbon),  # real GDP as % vs base
+        # plot_consumption(cons_base, cons_carbon),  # real consumer spending: base vs carbon
+        # plot_consumption_diff(cons_base, cons_carbon),  # real consumer spending as % vs base
         # plot_unemployment(unemp_base, unemp_carbon),
+        # plot_unemployment_diff(unemp_base, unemp_carbon),  # unemployment rate as pp vs base
+        # plot_cpi(cpi_base, cpi_carbon),  # household CPI (P_bar_HH): base vs carbon
+        # plot_cpi_diff(cpi_base, cpi_carbon),  # household CPI as % vs base
         # plot_carbon_dividend(lump_carbon),
         # plot_gdp_growth_quarterly_sourced(gdp_base),  # base case + overlaid "Sourced data" line
         # plot_gdp_growth_quarterly(gdp_base),       # base case only
@@ -427,8 +607,21 @@ function run_comparison(;
         table_inflation(infl_base, infl_carbon)
         table_taxes_production(taxprod_base, taxprod_carbon)
         table_emissions(emis_base, emis_carbon)
+        table_emissions_diff(emis_base, emis_carbon)
+        table_emissions_stacked(emis_base_sec, sector_labels)  # which sectors emit the most
+        table_production_sector(prod_base_sec, prod_carbon_sec, sector_labels)  # avg output/sector, base vs carbon
+        table_price_sector(price_base_sec, price_carbon_sec, sector_labels)     # avg price/sector, base vs carbon
+        table_price_polluters(price_carbon_sec, emis_base_sec, sector_labels)   # carbon price: top-8 polluters vs rest (grouped)
+        table_production_polluters(prod_carbon_sec, emis_base_sec, sector_labels)  # carbon production, indexed: polluters vs rest
+        table_employment_polluters(emp_carbon_sec, emis_base_sec, sector_labels)   # carbon employment, indexed: polluters vs rest
         table_real_gdp(gdp_base, gdp_carbon)
+        table_real_gdp_diff(gdp_base, gdp_carbon)  # real GDP as % vs base
+        table_consumption(cons_base, cons_carbon)  # real consumer spending: base vs carbon
+        table_consumption_diff(cons_base, cons_carbon)  # real consumer spending as % vs base
         table_unemployment(unemp_base, unemp_carbon)
+        table_unemployment_diff(unemp_base, unemp_carbon)  # unemployment rate as pp vs base
+        table_cpi(cpi_base, cpi_carbon)  # household CPI (P_bar_HH): base vs carbon
+        table_cpi_diff(cpi_base, cpi_carbon)  # household CPI as % vs base
         table_carbon_dividend(lump_carbon)
         # table_gdp_growth_quarterly(gdp_base)        # base case only
         # table_unemployment_quarterly(unemp_base)    # base case only

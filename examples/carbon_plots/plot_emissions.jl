@@ -1,7 +1,8 @@
 # Total carbon emissions (Σ intensity_i · Y_i): base vs carbon run.
 plot_emissions(emis_base, emis_carbon) = compare_panel(
     emis_base, emis_carbon;
-    title = "total carbon emissions", xlabel = "timestep", ylabel = "Σ intensity_i · Y_i",
+    start_q0 = 0,  # emissions are hand-tracked, so row 1 is the first simulated quarter (2024Q1)
+    title = "total carbon emissions", ylabel = "Σ intensity_i · Y_i",
 )
 
 # Same data as a mean-vs-time table.

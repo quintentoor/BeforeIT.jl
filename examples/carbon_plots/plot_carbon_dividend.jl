@@ -3,10 +3,12 @@
 # x-axis length is read from the matrix.
 function plot_carbon_dividend(lump_carbon)
     m, s = confidence_band(lump_carbon)
+    T = length(m)
     return plot(
-        1:length(m), m; ribbon = s, fillalpha = 0.2, label = "carbon",
+        1:T, m; ribbon = s, fillalpha = 0.2, label = "carbon",
         title = "carbon dividend per household",
-        xlabel = "timestep", ylabel = "€ per household / quarter",
+        xlabel = "quarter", ylabel = "€ per household / quarter",
+        xticks = quarter_xticks(T), xrotation = 45,
     )
 end
 
