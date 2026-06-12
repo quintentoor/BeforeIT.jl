@@ -29,17 +29,18 @@ end
 """
     cost_push_inflation(firms, model)
 
-CANVAS cost-push inflation: the growth rate of each firm's own average cost,
-`π_C = AC_i(t) / AC_i(t-1) − 1`. The previous quarter's average cost is read from
-`firms.AC_i_last` (seeded at the calibrated pre-policy cost), and this quarter's
-value is stored back for the next quarter. Called once per step from
-`set_firms_expectations_and_decisions!`, so updating the lag here is safe.
+Markup gap-closing cost-push inflation: `π^c_i = κ · (μ_i · AC_i / P_i − 1)`, with
+`μ_i = 1 / AC_i⁰` (calibrated cost) and `κ = prop.kappa_cp`. The firm closes a
+fraction κ of the gap between its current cost/price ratio and the calibrated one.
+Dividing by the firm's OWN price `P_i` makes the rule neutral to general inflation
+(AC_i and P_i move together, gap unchanged) while still responding to real cost
+shocks — so no deflation by an aggregate index is needed. Memoryless (no lag).
 """
 function cost_push_inflation(firms::AbstractFirms, model::AbstractModel)
-    AC_now = average_cost(firms, model) ./ model.agg.P_bar
-    pi_c_i = AC_now ./ firms.AC_i_last .- 1
-    firms.AC_i_last .= AC_now
-    return pi_c_i
+    kappa = model.prop.kappa_cp
+    AC_i = average_cost(firms, model)          # nominal; the ./P_i below deflates it
+    mu_i = 1.0 ./ firms.AC_i_0
+    return kappa .* (mu_i .* AC_i ./ firms.P_i .- 1)
 end
 
 function desired_capital_material_employment(firms::AbstractFirms, Q_s_i)
@@ -93,7 +94,6 @@ function firms_expectations_and_decisions(model::AbstractModel)
     firms = model.firms
 
     gamma_e, pi_e = model.agg.gamma_e, model.agg.pi_e
-    theta_cp = model.prop.theta_cp
 
     # target quantity
     Q_s_i = firms.Q_d_i * (1 + gamma_e)
@@ -101,14 +101,13 @@ function firms_expectations_and_decisions(model::AbstractModel)
     # cost put inflation
     pi_c_i = cost_push_inflation(firms, model)
 
-    # price setting: cost-push pass-through times an expected-inflation anchor.
-    # theta_cp scales how much of the firm's realized cost-push inflation pi_c_i passes
-    # into price; pi_e enters at full weight. With theta_cp = 1 this is the plain
-    # multiplicative form P_i*(1 + pi_c_i)*(1 + pi_e). NOTE: pi_e is currently pinned to
-    # a steady 2%/year (see `growth_inflation_expectations`), so the double-counting
-    # feedback that makes this form explode (pi_e tracking realized inflation) is broken
-    # — the expectation acts as a fixed inflation anchor, not an amplifier.
-    new_P_i = firms.P_i .* (1 .+ theta_cp .* pi_c_i) .* (1 .+ pi_e)
+    # price setting: markup-gap cost-push pass-through times an expected-inflation
+    # anchor. pi_c_i = kappa_cp * (mu_i * AC_i / P_i - 1) already carries the gap-closing
+    # speed kappa_cp (see `cost_push_inflation`), so there is no separate theta_cp
+    # multiplier here — applying one would double-damp. pi_e enters at full weight and is
+    # endogenous (AR(1), see `growth_inflation_expectations`); the P_i deflator inside
+    # pi_c_i keeps the gap trend-neutral, so the feedback does not explode.
+    new_P_i = firms.P_i .* (1 .+ pi_c_i) .* (1 .+ pi_e)
 
     # target investments in capital, intermediate goods to purchase and employment
     I_d_i, DM_d_i, N_d_i = desired_capital_material_employment(firms, Q_s_i)

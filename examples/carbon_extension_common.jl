@@ -76,15 +76,17 @@ alpha_growth_annual = 0.0154  # +1.54%/year
 sigma_HH = 1.0
 parameters["sigma_HH"] = sigma_HH
 
-# Cost-push pass-through in the firm price rule:
-#   P_i <- P_i * (1 + theta_cp * pi_c) * (1 + pi_e).
-# theta_cp scales how much realized cost-push inflation passes into price; expected
-# inflation pi_e enters at full weight (and is currently pinned to a steady 2%/year, see
-# `growth_inflation_expectations`). theta_cp = 1.0 gives the plain (1 + pi_c)(1 + pi_e)
-# form; 0.0 → prices follow the expectation only. Applied to BOTH base and carbon runs
-# via the shared `parameters` dict — change this one line to sweep theta.
-theta_cp = 1.0
-parameters["theta_cp"] = theta_cp
+# Markup gap-closing speed in the firm price rule (supervisor's rule, replaces the
+# old average-cost growth rule + agg.P_bar deflation):
+#   π^c_i = kappa_cp * (mu_i * AC_i / P_i − 1),  mu_i = 1 / AC_i⁰
+# Each quarter the firm closes fraction kappa_cp of the gap between its current
+# cost/price ratio and the calibrated one. General inflation moves AC_i and P_i
+# together so the gap is trend-neutral — no deflation needed. (pi_e is pinned to a
+# constant anchor separately; see growth_inflation_expectations.) kappa_cp = 1 → fastest
+# pass-through; lower → slower. Sensitivity range [0.5, 1.0]. Applied to BOTH base and
+# carbon runs via the shared `parameters` dict.
+kappa_cp = 1.0
+parameters["kappa_cp"] = kappa_cp
 
 # Carbon intensities (tCO2 / € of gross output), NL 2015, BeforeIT 62-sector ordering
 # Source: Eurostat env_ac_ainah_r2 (CO2 emissions) / nama_10_a64 (gross output), base year 2015

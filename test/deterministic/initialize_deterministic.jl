@@ -24,6 +24,7 @@
                 :K_e_i, :L_e_i, :Q_s_i, :I_d_i, :DM_d_i,
                 :N_d_i, :Pi_e_i, :C_d_h, :I_d_h, :C_h, :I_h,
                 :AC_i_last,  # CANVAS lagged average cost: Julia-only field, no MATLAB counterpart
+                :AC_i_0,     # calibrated (pre-policy) average cost for markup rule: Julia-only field, no MATLAB counterpart
             ]
             continue
         end

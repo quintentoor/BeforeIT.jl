@@ -119,6 +119,9 @@ function Firms(parameters, initial_conditions)
     # lagged average cost; placeholder, seeded with the actual unit cost once the
     # model is assembled (see the inner model constructor in agents.jl)
     AC_i_last = zeros(typeFloat, I)
+    # calibrated (pre-policy) average cost; placeholder, seeded once the model is
+    # assembled (see the inner model constructor in agents.jl). mu_i = 1/AC_i_0.
+    AC_i_0 = zeros(typeFloat, I)
 
     id_to_index = Dict{Int, Int}()
     index_to_id = collect(1:Int(I))
@@ -128,7 +131,7 @@ function Firms(parameters, initial_conditions)
         del, lastid, id_to_index, index_to_id,
         G_i, alpha_bar_i, beta_i, kappa_i, w_i, w_bar_i, delta_i, tau_Y_i, tau_K_i, N_i, Y_i, Q_i, Q_d_i,
         P_i, S_i, K_i, M_i, L_i, pi_bar_i, D_i, Pi_i, V_i, I_i, E_i, P_bar_i, P_CF_i, DS_i, DM_i, DL_i,
-        DL_d_i, K_e_i, L_e_i, Q_s_i, I_d_i, DM_d_i, N_d_i, Pi_e_i, Y_h, C_d_h, I_d_h, C_h, I_h, K_h, D_h, AC_i_last
+        DL_d_i, K_e_i, L_e_i, Q_s_i, I_d_i, DM_d_i, N_d_i, Pi_e_i, Y_h, C_d_h, I_d_h, C_h, I_h, K_h, D_h, AC_i_last, AC_i_0
     )
 end
 

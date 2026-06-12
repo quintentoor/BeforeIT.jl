@@ -146,6 +146,7 @@ Bit.@object mutable struct Firms(Object) <: AbstractFirms
     const K_h::Vector{Bit.typeFloat}
     const D_h::Vector{Bit.typeFloat}
     const AC_i_last::Vector{Bit.typeFloat}  # previous-quarter average (unit) cost, for CANVAS cost-push pricing
+    const AC_i_0::Vector{Bit.typeFloat}     # calibrated (pre-policy) average (unit) cost; mu_i = 1/AC_i_0 in the markup price rule
 end
 
 """
@@ -403,10 +404,11 @@ function (::Type{T})(agents) where {T <: AbstractModel}
     # update model variables with global quantities (total income, total deposits) obtained from all the agents
     update_variables_with_totals!(model)
 
-    # seed the lagged average cost with the calibrated (pre-policy) unit cost, so the
-    # first step's cost-push inflation AC(1)/AC(0) - 1 is well-defined (≈ 0 when nothing
-    # has moved yet). Dispatches to the base, carbon-free `average_cost` for every model.
-    model.firms.AC_i_last .= average_cost(model.firms, model) ./ model.agg.P_bar
+    # Calibrated (pre-policy) unit cost for the markup rule. Carbon-free by construction
+    # — there is no tax at t=0, so introducing it later opens the cost/price gap.
+    # With P_i = 1 at calibration, mu_i * AC_i⁰ / P_i = 1, so pi_c_i = 0 in the first
+    # quarter (no spurious initial price jump).
+    model.firms.AC_i_0 .= average_cost(model.firms, model)
 
     # initialize data collection
     collect_data!(model)
