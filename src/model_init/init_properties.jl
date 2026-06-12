@@ -40,6 +40,7 @@ Bit.@object mutable struct Properties(Object) <: AbstractProperties
     sb_other::Bit.typeFloat
     E_k::Bit.typeFloat
     r_bar::Bit.typeFloat
+    theta_cp::Bit.typeFloat   # cost-push pass-through weight in firm price setting; (1 - theta_cp) is the expected-inflation weight
 end
 
 function Properties(parameters::Dict{String, Any}, initial_conditions)
@@ -95,9 +96,16 @@ function Properties(parameters::Dict{String, Any}, initial_conditions)
     E_k = typeFloat(initial_conditions["E_k"])
     r_bar = typeFloat(initial_conditions["r_bar"])
 
+    # Cost-push pass-through in the firm price rule
+    #   P_i <- P_i * (1 + theta_cp * pi_c) * (1 + pi_e).
+    # theta_cp scales how much of realized cost-push inflation passes into price; expected
+    # inflation pi_e enters at full weight. Defaults to 1.0 → the plain multiplicative form
+    # (1 + pi_c)(1 + pi_e). 0.0 → prices follow the expected-inflation anchor only.
+    theta_cp = typeFloat(get(parameters, "theta_cp", 1.0))
+
     return Properties(
         G, T_prime, H_act, H_inact, J, L, I_s, I, H, tau_INC, tau_FIRM, tau_VAT, tau_SIF,
         tau_SIW, tau_EXPORT, tau_CF, tau_G, theta_UB, psi, psi_H, sigma_HH, mu, theta_DIV, theta, zeta, zeta_LTV,
-        zeta_b, b_CF_g, b_CFH_g, b_HH_g, c_G_g, c_E_g, c_I_g, a_sg, C, D_H, K_H, sb_other, E_k, r_bar
+        zeta_b, b_CF_g, b_CFH_g, b_HH_g, c_G_g, c_E_g, c_I_g, a_sg, C, D_H, K_H, sb_other, E_k, r_bar, theta_cp
     )
 end

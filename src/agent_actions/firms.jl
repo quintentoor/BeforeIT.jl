@@ -36,9 +36,9 @@ value is stored back for the next quarter. Called once per step from
 `set_firms_expectations_and_decisions!`, so updating the lag here is safe.
 """
 function cost_push_inflation(firms::AbstractFirms, model::AbstractModel)
-    AC_now = average_cost(firms, model)
+    AC_now = average_cost(firms, model) ./ model.agg.P_bar
     pi_c_i = AC_now ./ firms.AC_i_last .- 1
-    firms.AC_i_last .= AC_now  # store for next quarter's ratio
+    firms.AC_i_last .= AC_now
     return pi_c_i
 end
 
@@ -93,6 +93,7 @@ function firms_expectations_and_decisions(model::AbstractModel)
     firms = model.firms
 
     gamma_e, pi_e = model.agg.gamma_e, model.agg.pi_e
+    theta_cp = model.prop.theta_cp
 
     # target quantity
     Q_s_i = firms.Q_d_i * (1 + gamma_e)
@@ -100,11 +101,14 @@ function firms_expectations_and_decisions(model::AbstractModel)
     # cost put inflation
     pi_c_i = cost_push_inflation(firms, model)
 
-    # price setting: under the CANVAS average-cost rule, pi_c_i = AC(t)/AC(t-1) - 1
-    # already carries the inflation trend (AC is built from the economy's price
-    # indices), so the firm passes through its own cost growth directly. Multiplying
-    # by (1 + pi_e) again would double-count inflation and make prices explode.
-    new_P_i = firms.P_i .* (1 .+ pi_c_i)
+    # price setting: cost-push pass-through times an expected-inflation anchor.
+    # theta_cp scales how much of the firm's realized cost-push inflation pi_c_i passes
+    # into price; pi_e enters at full weight. With theta_cp = 1 this is the plain
+    # multiplicative form P_i*(1 + pi_c_i)*(1 + pi_e). NOTE: pi_e is currently pinned to
+    # a steady 2%/year (see `growth_inflation_expectations`), so the double-counting
+    # feedback that makes this form explode (pi_e tracking realized inflation) is broken
+    # — the expectation acts as a fixed inflation anchor, not an amplifier.
+    new_P_i = firms.P_i .* (1 .+ theta_cp .* pi_c_i) .* (1 .+ pi_e)
 
     # target investments in capital, intermediate goods to purchase and employment
     I_d_i, DM_d_i, N_d_i = desired_capital_material_employment(firms, Q_s_i)

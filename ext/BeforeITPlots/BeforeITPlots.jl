@@ -24,6 +24,7 @@ const QUANTITY_TITLES = Dict(
     :real_exports => "Exports",
     :real_imports => "Imports",
     :gdp_deflator => "GDP Deflator",
+    :gdp_deflator_growth => "Total Inflation",
 )
 
 const DEFAULT_TITLEFONT = 9
@@ -41,14 +42,36 @@ Falls back to string conversion if not in QUANTITY_TITLES.
 get_plot_title(quantity::Symbol) = get(QUANTITY_TITLES, quantity, string(quantity))
 
 """
+    deflator_growth(deflator)
+
+Period-over-period growth rate of the GDP deflator, i.e. total inflation:
+`g_t = deflator_t / deflator_{t-1} - 1`. The first period is padded with `NaN`
+so the returned series keeps the same length (and time alignment) as the level
+quantities. Works for a single run (vector) or an ensemble (time × sims matrix).
+"""
+function deflator_growth(deflator::AbstractVector)
+    g = fill(NaN, length(deflator))
+    @views g[2:end] .= deflator[2:end] ./ deflator[1:(end - 1)] .- 1
+    return g
+end
+function deflator_growth(deflator::AbstractMatrix)
+    g = fill(NaN, size(deflator))
+    @views g[2:end, :] .= deflator[2:end, :] ./ deflator[1:(end - 1), :] .- 1
+    return g
+end
+
+"""
     compute_quantity_data(data_vector, quantity::Symbol)
 
 Extract or compute the data for a given quantity from a DataVector.
-GDP deflator is computed as nominal_gdp / real_gdp, other quantities are extracted directly.
+GDP deflator is computed as nominal_gdp / real_gdp, total inflation as its
+period-over-period growth, other quantities are extracted directly.
 """
 function compute_quantity_data(data_vector, quantity::Symbol)
     if quantity == :gdp_deflator
         return data_vector.nominal_gdp ./ data_vector.real_gdp
+    elseif quantity == :gdp_deflator_growth
+        return deflator_growth(data_vector.nominal_gdp ./ data_vector.real_gdp)
     else
         return getproperty(data_vector, quantity)
     end
@@ -189,9 +212,11 @@ function Bit.plot_data(
     for (i, quantity) in enumerate(quantities)
         title = get_plot_title(quantity)
 
-        # Compute the data (handles GDP deflator special case)
+        # Compute the data (handles GDP deflator / total inflation special cases)
         if quantity == :gdp_deflator
             plot_data = data.nominal_gdp ./ data.real_gdp
+        elseif quantity == :gdp_deflator_growth
+            plot_data = deflator_growth(data.nominal_gdp ./ data.real_gdp)
         else
             plot_data = getproperty(data, quantity)
         end

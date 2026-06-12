@@ -29,14 +29,18 @@ The expected inflation rate `pi_e` is calculated as follows:
 function growth_inflation_expectations(model::AbstractModel)
     agg = model.agg
 
-    Y, pi_, T_prime, t = model.agg.Y, model.agg.pi_, model.prop.T_prime, model.agg.t
+    Y, T_prime, t = model.agg.Y, model.prop.T_prime, model.agg.t
 
     lY_e = estimate_next_value(log.(Y[1:(T_prime + t - 1)]))
     Y_e = exp(lY_e) # expected GDP
     gamma_e = Y_e / Y[T_prime + t - 1] - 1 # expected growth
 
-    lpi = estimate_next_value(pi_[1:(T_prime + t - 1)])
-    pi_e = exp(lpi) - 1 # expected inflation rate
+    # QUICK TEST: steady expected inflation, disconnected from the backward-looking
+    # AR(1) estimate. Anchored at 2%/year, converted to the model's quarterly step.
+    # To restore the data-driven expectation, re-add `pi_` to the destructure above and
+    # replace the line below with:
+    #   pi_e = exp(estimate_next_value(model.agg.pi_[1:(T_prime + t - 1)])) - 1
+    pi_e = (1.0 + 0.02)^(1 / 4) - 1 # 2%/year ≈ 0.4963%/quarter
 
     return Y_e, gamma_e, pi_e
 end

@@ -293,9 +293,21 @@ end
 # shows up as a cost increase. Updating the lag here is safe — `cost_push_inflation`
 # is called exactly once per step.
 function Bit.cost_push_inflation(firms::FirmsCarbon, model::ModelCarbon)
-    AC_now = Bit.average_cost(firms, model) .+ firms.tau_carbon .* firms.carbon_intensity_i
+    # Deflate the structural unit cost by the aggregate price index so the common
+    # pi_e trend (which leaks in via P_bar_HH/P_bar_g/P_bar_CF) is stripped out of
+    # pi_c_i, leaving real cost growth: productivity decline + relative/network
+    # shifts. pi_e is then re-applied exactly once in the price update, instead of
+    # entering twice. Read of agg.P_bar here is the PRIOR quarter's value (price
+    # indices are updated later in one_step.jl), matching the prior-quarter vintage
+    # of P_bar_HH/g/CF inside average_cost — numerator and denominator same vintage.
+    AC_struct = Bit.average_cost(firms, model) ./ model.agg.P_bar
+    # Carbon term kept NOMINAL (the Wet CO2-heffing schedule is set in nominal €/t),
+    # so a plateaued tax stops growing and contributes 0 to pi_c_i — preserving the
+    # "constant tax is a one-time level shift" behaviour. Do NOT deflate this term.
+    AC_carbon = firms.tau_carbon .* firms.carbon_intensity_i
+    AC_now = AC_struct .+ AC_carbon
     pi_c_i = AC_now ./ firms.AC_i_last .- 1
-    firms.AC_i_last .= AC_now  # store for next quarter's ratio
+    firms.AC_i_last .= AC_now  # store the (mixed real/nominal) value for next quarter's ratio
     return pi_c_i
 end
 

@@ -11,8 +11,8 @@ Run:
 julia --project=examples
 
 include("examples/carbon_extension_common.jl")
-sim = simulate(; abatement = false)
 
+sim = simulate(; abatement = false)
 
 And then whichever graphs you want
 
@@ -30,6 +30,7 @@ using Plots, JLD2, Random, Statistics
 const CARBON_PLOT_DIR = joinpath(@__DIR__, "carbon_plots")
 include(joinpath(CARBON_PLOT_DIR, "plot_helpers.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_inflation.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_total_inflation.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_taxes_production.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_emissions.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_emissions_diff.jl"))
@@ -74,6 +75,16 @@ alpha_growth_annual = 0.0154  # +1.54%/year
 # (agg.P_bar_g, firms.P_i), so q_i/q_j = α_i/α_j in the initial year under any σ.
 sigma_HH = 1.0
 parameters["sigma_HH"] = sigma_HH
+
+# Cost-push pass-through in the firm price rule:
+#   P_i <- P_i * (1 + theta_cp * pi_c) * (1 + pi_e).
+# theta_cp scales how much realized cost-push inflation passes into price; expected
+# inflation pi_e enters at full weight (and is currently pinned to a steady 2%/year, see
+# `growth_inflation_expectations`). theta_cp = 1.0 gives the plain (1 + pi_c)(1 + pi_e)
+# form; 0.0 → prices follow the expectation only. Applied to BOTH base and carbon runs
+# via the shared `parameters` dict — change this one line to sweep theta.
+theta_cp = 1.0
+parameters["theta_cp"] = theta_cp
 
 # Carbon intensities (tCO2 / € of gross output), NL 2015, BeforeIT 62-sector ordering
 # Source: Eurostat env_ac_ainah_r2 (CO2 emissions) / nama_10_a64 (gross output), base year 2015
@@ -425,6 +436,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     lump_carbon = zeros(T, n_sims)
     ren_share = [zeros(T, n_sims) for _ in split]  # renewable share of each split sector's output
     infl_base_v = Vector{Float64}[];    infl_carbon_v = Vector{Float64}[]
+    totinfl_base_v = Vector{Float64}[]; totinfl_carbon_v = Vector{Float64}[]  # domestic total inflation (GDP deflator)
     taxprod_base_v = Vector{Float64}[]; taxprod_carbon_v = Vector{Float64}[]
     gdp_base_v = Vector{Float64}[];     gdp_carbon_v = Vector{Float64}[]
     cons_base_v = Vector{Float64}[];    cons_carbon_v = Vector{Float64}[]
@@ -449,6 +461,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
             cpi_base[t, s] = base.agg.P_bar_HH
         end
         push!(infl_base_v, copy(base.data.gdp_deflator_growth_ea))
+        push!(totinfl_base_v, total_inflation(base))
         push!(taxprod_base_v, copy(base.data.taxes_production))
         push!(gdp_base_v, copy(base.data.real_gdp))
         push!(cons_base_v, copy(base.data.real_household_consumption))
@@ -476,6 +489,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
             end
         end
         push!(infl_carbon_v, copy(carbon.data.gdp_deflator_growth_ea))
+        push!(totinfl_carbon_v, total_inflation(carbon))
         push!(taxprod_carbon_v, copy(carbon.data.taxes_production))
         push!(gdp_carbon_v, copy(carbon.data.real_gdp))
         push!(cons_carbon_v, copy(carbon.data.real_household_consumption))
@@ -485,6 +499,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
 
     # Assemble the built-in series into (Td × n_sims) matrices (Td = T+1).
     infl_base = reduce(hcat, infl_base_v);       infl_carbon = reduce(hcat, infl_carbon_v)
+    totinfl_base = reduce(hcat, totinfl_base_v); totinfl_carbon = reduce(hcat, totinfl_carbon_v)
     taxprod_base = reduce(hcat, taxprod_base_v); taxprod_carbon = reduce(hcat, taxprod_carbon_v)
     gdp_base = reduce(hcat, gdp_base_v);         gdp_carbon = reduce(hcat, gdp_carbon_v)
     cons_base = reduce(hcat, cons_base_v);       cons_carbon = reduce(hcat, cons_carbon_v)
@@ -496,6 +511,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     return (;
         abatement, n_sims, mode, split, sector_labels,
         infl_base, infl_carbon,
+        totinfl_base, totinfl_carbon,
         taxprod_base, taxprod_carbon,
         emis_base, emis_carbon, emis_base_sec,
         prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
@@ -532,7 +548,7 @@ function run_comparison(;
     )
     data = simulate(; abatement, n_sims, carbon_efficiency_annual)
     (;
-        infl_base, infl_carbon, taxprod_base, taxprod_carbon,
+        infl_base, infl_carbon, totinfl_base, totinfl_carbon, taxprod_base, taxprod_carbon,
         emis_base, emis_carbon, emis_base_sec,
         prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
         emp_carbon_sec,
@@ -547,7 +563,8 @@ function run_comparison(;
     # graph). Comment a line out to hide that graph; uncomment one to show it. The
     # base-case-only quarterly graphs are commented out by default.
     panels = [
-        # plot_inflation(infl_base, infl_carbon),
+        # plot_inflation(infl_base, infl_carbon),  # EA (euro-area) inflation — exogenous process
+        # plot_total_inflation(totinfl_base, totinfl_carbon),  # domestic total inflation (GDP deflator)
         # plot_taxes_production(taxprod_base, taxprod_carbon),
         # plot_emissions(emis_base, emis_carbon),
         # plot_emissions_diff(emis_base, emis_carbon),  # carbon emissions as % vs base
@@ -605,6 +622,7 @@ function run_comparison(;
     if show_tables
         println("\n=== Tables — cross-run mean vs timestep ($mode) ===")
         table_inflation(infl_base, infl_carbon)
+        table_total_inflation(totinfl_base, totinfl_carbon)
         table_taxes_production(taxprod_base, taxprod_carbon)
         table_emissions(emis_base, emis_carbon)
         table_emissions_diff(emis_base, emis_carbon)

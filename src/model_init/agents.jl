@@ -406,7 +406,7 @@ function (::Type{T})(agents) where {T <: AbstractModel}
     # seed the lagged average cost with the calibrated (pre-policy) unit cost, so the
     # first step's cost-push inflation AC(1)/AC(0) - 1 is well-defined (≈ 0 when nothing
     # has moved yet). Dispatches to the base, carbon-free `average_cost` for every model.
-    model.firms.AC_i_last .= average_cost(model.firms, model)
+    model.firms.AC_i_last .= average_cost(model.firms, model) ./ model.agg.P_bar
 
     # initialize data collection
     collect_data!(model)
