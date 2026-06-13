@@ -85,7 +85,7 @@ parameters["sigma_HH"] = sigma_HH
 # constant anchor separately; see growth_inflation_expectations.) kappa_cp = 1 → fastest
 # pass-through; lower → slower. Sensitivity range [0.5, 1.0]. Applied to BOTH base and
 # carbon runs via the shared `parameters` dict.
-kappa_cp = 1.0
+kappa_cp = 0.6
 parameters["kappa_cp"] = kappa_cp
 
 # Carbon intensities (tCO2 / € of gross output), NL 2015, BeforeIT 62-sector ordering
@@ -377,7 +377,7 @@ between them is the carbon tax itself — the comparison stays clean per run whi
 the band across runs shows estimation uncertainty. Each `plot_*` shows the cross-run
 mean as a line with a 95% confidence-interval ribbon (mean ± 1.96·std/√n).
 """
-function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0)
+function simulate(; abatement::Bool, n_sims::Int = 10, carbon_efficiency_annual::Real = 0.0)
     split = [s.sector for s in abatement_sectors]
     shares = [s.renewable_share for s in abatement_sectors]
     rints = [s.renewable_intensity for s in abatement_sectors]
