@@ -37,6 +37,8 @@ include(joinpath(CARBON_PLOT_DIR, "plot_emissions_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_emissions_stacked.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_sector_prod_price.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_employment_polluters.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_profit_polluters.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_deposits_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_consumption.jl"))
@@ -44,6 +46,7 @@ include(joinpath(CARBON_PLOT_DIR, "plot_consumption_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_unemployment.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_unemployment_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_carbon_dividend.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_dividend_vs_consumption.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_cpi.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_cpi_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_renewable_share.jl"))
@@ -85,7 +88,7 @@ parameters["sigma_HH"] = sigma_HH
 # constant anchor separately; see growth_inflation_expectations.) kappa_cp = 1 → fastest
 # pass-through; lower → slower. Sensitivity range [0.5, 1.0]. Applied to BOTH base and
 # carbon runs via the shared `parameters` dict.
-kappa_cp = 0.6
+kappa_cp = 0.5
 parameters["kappa_cp"] = kappa_cp
 
 # Carbon intensities (tCO2 / € of gross output), NL 2015, BeforeIT 62-sector ordering
@@ -314,6 +317,38 @@ function employment_by_sector(model, ng)
     return n
 end
 
+# Firm PROFITS BY SECTOR: returns a length-`ng` vector where entry `g` is the total
+# realised firm profit across the firms in sector `g`. `model.firms.Pi_i[i]` is firm
+# i's realised profit this quarter (sales + deposit interest − wages − intermediate
+# goods − depreciation − product/capital/carbon taxes − loan interest; see
+# `set_firms_profits!`) and `model.firms.G_i[i]` its sector index (1..ng), so we
+# scatter-add each firm's profit into its sector's bucket — exactly mirroring
+# `employment_by_sector`. Summing this vector gives economy-wide firm profits. With
+# abatement a split sector's fossil + renewable firms share the index, so they fold
+# back into the same bucket.
+function profit_by_sector(model, ng)
+    pi = zeros(ng)
+    @inbounds for i in eachindex(model.firms.Pi_i)
+        pi[model.firms.G_i[i]] += model.firms.Pi_i[i]
+    end
+    return pi
+end
+
+# Firm DEPOSITS BY SECTOR: returns a length-`ng` vector where entry `g` is the total
+# bank deposits held by the firms in sector `g`. `model.firms.D_i[i]` is firm i's
+# deposit balance (can go negative — an overdraft/loan position) and
+# `model.firms.G_i[i]` its sector index (1..ng), so we scatter-add each firm's
+# deposits into its sector's bucket — exactly mirroring `profit_by_sector`. Summing
+# this vector gives economy-wide firm deposits. With abatement a split sector's
+# fossil + renewable firms share the index, so they fold back into the same bucket.
+function deposits_by_sector(model, ng)
+    d = zeros(ng)
+    @inbounds for i in eachindex(model.firms.D_i)
+        d[model.firms.G_i[i]] += model.firms.D_i[i]
+    end
+    return d
+end
+
 # Lump-sum carbon dividend recycled to each household this quarter, in euros.
 carbon_dividend(model) =
     sum(model.firms.tau_carbon .* model.firms.carbon_intensity_i .* model.firms.Y_i) / model.prop.H
@@ -377,7 +412,7 @@ between them is the carbon tax itself — the comparison stays clean per run whi
 the band across runs shows estimation uncertainty. Each `plot_*` shows the cross-run
 mean as a line with a 95% confidence-interval ribbon (mean ± 1.96·std/√n).
 """
-function simulate(; abatement::Bool, n_sims::Int = 10, carbon_efficiency_annual::Real = 0.0)
+function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0)
     split = [s.sector for s in abatement_sectors]
     shares = [s.renewable_share for s in abatement_sectors]
     rints = [s.renewable_intensity for s in abatement_sectors]
@@ -433,6 +468,12 @@ function simulate(; abatement::Bool, n_sims::Int = 10, carbon_efficiency_annual:
     # Per-sector employment (number of persons employed), tracked for both runs so
     # the carbon tax's effect on the sectoral distribution of jobs can be compared.
     emp_base_sec = zeros(T, G, n_sims);   emp_carbon_sec = zeros(T, G, n_sims)
+    # Per-sector total firm profits (Pi_i), tracked for both runs so the carbon tax's
+    # effect on the sectoral distribution of profits can be compared.
+    prof_base_sec = zeros(T, G, n_sims);  prof_carbon_sec = zeros(T, G, n_sims)
+    # Per-sector total firm deposits (D_i), tracked for both runs so the carbon tax's
+    # effect on the sectoral distribution of firm cash balances can be compared.
+    dep_base_sec = zeros(T, G, n_sims);   dep_carbon_sec = zeros(T, G, n_sims)
     unemp_base = zeros(T, n_sims);   unemp_carbon = zeros(T, n_sims)
     cpi_base = zeros(T, n_sims);     cpi_carbon = zeros(T, n_sims)  # household CPI = agg.P_bar_HH
     lump_carbon = zeros(T, n_sims)
@@ -459,6 +500,8 @@ function simulate(; abatement::Bool, n_sims::Int = 10, carbon_efficiency_annual:
             emis_base_sec[t, :, s] = emissions_by_sector(base, G)
             prod_base_sec[t, :, s], price_base_sec[t, :, s] = sector_averages(base, G)
             emp_base_sec[t, :, s] = employment_by_sector(base, G)
+            prof_base_sec[t, :, s] = profit_by_sector(base, G)
+            dep_base_sec[t, :, s] = deposits_by_sector(base, G)
             unemp_base[t, s] = unemployment_rate(base)
             cpi_base[t, s] = base.agg.P_bar_HH
         end
@@ -482,6 +525,8 @@ function simulate(; abatement::Bool, n_sims::Int = 10, carbon_efficiency_annual:
             emis_carbon[t, s] = emissions(carbon)
             prod_carbon_sec[t, :, s], price_carbon_sec[t, :, s] = sector_averages(carbon, G)
             emp_carbon_sec[t, :, s] = employment_by_sector(carbon, G)
+            prof_carbon_sec[t, :, s] = profit_by_sector(carbon, G)
+            dep_carbon_sec[t, :, s] = deposits_by_sector(carbon, G)
             unemp_carbon[t, s] = unemployment_rate(carbon)
             cpi_carbon[t, s] = carbon.agg.P_bar_HH
             lump_carbon[t, s] = carbon_dividend(carbon)
@@ -518,6 +563,8 @@ function simulate(; abatement::Bool, n_sims::Int = 10, carbon_efficiency_annual:
         emis_base, emis_carbon, emis_base_sec,
         prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
         emp_base_sec, emp_carbon_sec,
+        prof_base_sec, prof_carbon_sec,
+        dep_base_sec, dep_carbon_sec,
         gdp_base, gdp_carbon,
         cons_base, cons_carbon,
         unemp_base, unemp_carbon,
@@ -553,7 +600,7 @@ function run_comparison(;
         infl_base, infl_carbon, totinfl_base, totinfl_carbon, taxprod_base, taxprod_carbon,
         emis_base, emis_carbon, emis_base_sec,
         prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
-        emp_carbon_sec,
+        emp_carbon_sec, prof_carbon_sec, dep_base_sec, dep_carbon_sec,
         gdp_base, gdp_carbon,
         cons_base, cons_carbon,
         unemp_base, unemp_carbon, cpi_base, cpi_carbon, lump_carbon, ren_share,
@@ -576,6 +623,9 @@ function run_comparison(;
         # plot_price_polluters(price_carbon_sec, emis_base_sec),  # carbon price: top-8 polluters vs rest (grouped)
         # plot_production_polluters(prod_carbon_sec, emis_base_sec),  # carbon production, indexed: top-8 polluters vs rest
         # plot_employment_polluters(emp_carbon_sec, emis_base_sec),  # carbon employment, indexed: top-8 polluters vs rest
+        # plot_profit_polluters(prof_carbon_sec, emis_base_sec),  # carbon firm profits, indexed: top-8 polluters vs rest
+        # plot_deposits_polluters(dep_carbon_sec, emis_base_sec),  # carbon firm deposits (€): top-8 polluters vs rest
+        # plot_deposits_polluters_base(dep_base_sec, emis_base_sec),  # base firm deposits (€): top-8 polluters vs rest
 
         # plot_real_gdp(gdp_base, gdp_carbon),
         # plot_real_gdp_diff(gdp_base, gdp_carbon),  # real GDP as % vs base
@@ -586,6 +636,7 @@ function run_comparison(;
         # plot_cpi(cpi_base, cpi_carbon),  # household CPI (P_bar_HH): base vs carbon
         # plot_cpi_diff(cpi_base, cpi_carbon),  # household CPI as % vs base
         # plot_carbon_dividend(lump_carbon),
+        # plot_dividend_vs_consumption(lump_carbon, cons_base, cons_carbon),  # rebate (€) vs real-consumption uplift (%)
         # plot_gdp_growth_quarterly_sourced(gdp_base),  # base case + overlaid "Sourced data" line
         # plot_gdp_growth_quarterly(gdp_base),       # base case only
         # plot_unemployment_quarterly(unemp_base),   # base case only
@@ -634,6 +685,9 @@ function run_comparison(;
         table_price_polluters(price_carbon_sec, emis_base_sec, sector_labels)   # carbon price: top-8 polluters vs rest (grouped)
         table_production_polluters(prod_carbon_sec, emis_base_sec, sector_labels)  # carbon production, indexed: polluters vs rest
         table_employment_polluters(emp_carbon_sec, emis_base_sec, sector_labels)   # carbon employment, indexed: polluters vs rest
+        table_profit_polluters(prof_carbon_sec, emis_base_sec, sector_labels)      # carbon firm profits, indexed: polluters vs rest
+        table_deposits_polluters(dep_carbon_sec, emis_base_sec, sector_labels)     # carbon firm deposits (€): polluters vs rest
+        table_deposits_polluters_base(dep_base_sec, emis_base_sec, sector_labels)  # base firm deposits (€): polluters vs rest
         table_real_gdp(gdp_base, gdp_carbon)
         table_real_gdp_diff(gdp_base, gdp_carbon)  # real GDP as % vs base
         table_consumption(cons_base, cons_carbon)  # real consumer spending: base vs carbon
@@ -643,6 +697,7 @@ function run_comparison(;
         table_cpi(cpi_base, cpi_carbon)  # household CPI (P_bar_HH): base vs carbon
         table_cpi_diff(cpi_base, cpi_carbon)  # household CPI as % vs base
         table_carbon_dividend(lump_carbon)
+        table_dividend_vs_consumption(lump_carbon, cons_base, cons_carbon)  # rebate (€) vs real-consumption uplift (%)
         # table_gdp_growth_quarterly(gdp_base)        # base case only
         # table_unemployment_quarterly(unemp_base)    # base case only
         abatement && table_renewable_share(ren_share, split)
