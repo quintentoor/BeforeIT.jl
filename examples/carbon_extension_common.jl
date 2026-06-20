@@ -356,6 +356,72 @@ carbon_dividend(model) =
 # Unemployment rate over the active workforce: O_h == 0 means unemployed.
 unemployment_rate(model) = count(==(0), model.w_act.O_h) / length(model.w_act.O_h)
 
+# --- Common-deflator real GDP (Laspeyres-style volume comparison) --------------
+# `model.data.real_gdp` deflates each run's nominal final demand by THAT run's own
+# price indices (agg.P_bar_h, agg.P_bar_CF_h, gov.P_j, rotw.P_l). A base-vs-carbon
+# gap therefore mixes two things: different volumes AND different prices (the tax
+# pushes the carbon run's prices up). To isolate volume, we re-deflate BOTH runs
+# with a single, common price path — the baseline (no-tax) run's. This is the
+# Laspeyres idea: value each scenario's quantities at a FIXED reference price
+# vector, so the only thing that can move the comparison is quantity. We pair by
+# RNG seed: base run s and carbon run s share the same seed and initial state, so
+# base run s's quarter-by-quarter price path is the natural common deflator for the
+# pair (applied to both members of the pair).
+#
+# `real_gdp` (see src/utils/data.jl `update_data_step!`) is, per quarter:
+#     real-production-term                          (a volume; carries NO price)
+#   + tau_VAT    * tot_C_h / P_bar_h                (household-consumption tax wedge)
+#   + tau_CF     * tot_I_h / P_bar_CF_h             (capital-formation tax wedge)
+#   + tau_G      * gov.C_j / gov.P_j                (government tax wedge)
+#   + tau_EXPORT * rotw.C_l / rotw.P_l              (export tax wedge)
+# Only the four nominal wedges carry a price, so only they get re-deflated; the
+# production term passes through unchanged. We keep all of this in the analysis
+# layer (src/utils/data.jl is NOT modified).
+#
+# To check the carbon-vs-base gap isn't an artefact of WHICH price path we fix on,
+# we build the same volume comparison under three classic index conventions (all via
+# `real_gdp_common`, which accepts any supplied price path):
+#   * Laspeyres — both runs valued at the BASE run's prices  (base-scenario weights)
+#   * Paasche   — both runs valued at the CARBON run's prices (carbon-scenario weights)
+#   * Fisher    — geometric mean of the Laspeyres and Paasche carbon/base gap ratios
+# Laspeyres and Paasche bracket the truth; Fisher sits between them. If the gap barely
+# moves across the three, it's a volume effect, not an index choice.
+
+# Decompose a model's current-quarter real GDP into the pieces the common deflator
+# needs: the price-free production volume, the four nominal final-demand wedges, and
+# the run's OWN four price indices (so a base run can later hand its prices to the
+# matching carbon run). Mirrors `Bit.update_data_step!`'s real_gdp exactly —
+# deflating these nominals by THESE prices reproduces `model.data.real_gdp[t]`.
+function gdp_components(m)
+    p = m.prop
+    tot_C_h = sum(m.w_act.C_h) + sum(m.w_inact.C_h) + sum(m.firms.C_h) + m.bank.C_h
+    tot_I_h = sum(m.w_act.I_h) + sum(m.w_inact.I_h) + sum(m.firms.I_h) + m.bank.I_h
+    return (
+        prod = sum(m.firms.Y_i .* ((1 .- m.firms.tau_Y_i) .- 1 ./ m.firms.beta_i)) +
+               sum(m.firms.tau_Y_i .* m.firms.Y_i),  # real production term (no price)
+        nom_C = p.tau_VAT * tot_C_h,        # nominal wedge, deflated by P_bar_h
+        nom_I = p.tau_CF * tot_I_h,         # nominal wedge, deflated by P_bar_CF_h
+        nom_G = p.tau_G * m.gov.C_j,        # nominal wedge, deflated by gov.P_j
+        nom_E = p.tau_EXPORT * m.rotw.C_l,  # nominal wedge, deflated by rotw.P_l
+        P_C = m.agg.P_bar_h,
+        P_I = m.agg.P_bar_CF_h,
+        P_G = m.gov.P_j,
+        P_E = m.rotw.P_l,
+    )
+end
+
+# Recompute one quarter's real GDP from a run's nominal components `nom`, deflating
+# its four final-demand wedges by the BASELINE run's price indices `base_P` (only
+# the P_* fields of `base_P` are read). Pass `base_P = nom` to recover the run's own
+# `real_gdp`; pass the matching base run's components to get the common-deflator
+# value. The production term carries no price, so it is added as-is.
+real_gdp_common(nom, base_P) =
+    nom.prod +
+    nom.nom_C / base_P.P_C +
+    nom.nom_I / base_P.P_I +
+    nom.nom_G / base_P.P_G +
+    nom.nom_E / base_P.P_E
+
 
 """
     simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0)
@@ -374,6 +440,18 @@ The fields are the `(steps × n_sims)` matrices behind each graph: `infl_*`,
 `taxprod_*`, `emis_*`, `gdp_*`, `unemp_*` (each a `_base`/`_carbon` pair),
 `lump_carbon`, `ren_share` (a vector, one matrix per split sector), `split`,
 `yg_base`/`yg_carbon`, and the bookkeeping `abatement`/`n_sims`/`mode`.
+
+`gdp_base_common`/`gdp_carbon_common` are the common-deflator real-GDP matrices:
+both runs re-deflated by the matching (same-seed) base run's price path, so a
+base-vs-carbon difference reflects volume only (see the Laspeyres note above
+`gdp_components`). Feed them to `plot_real_gdp`/`table_real_gdp` with
+`common_deflator = true` to compare against the own-deflator `gdp_base`/`gdp_carbon`.
+
+`gdp_base_P`/`gdp_carbon_P` are the Paasche counterparts (both runs re-deflated by the
+matching carbon run's price path), and `gdp_fisher_ratio` is the Fisher carbon/base gap
+ratio — the per-run, per-quarter geometric mean of the Laspeyres and Paasche gap ratios
+(shaped T+1 × n_sims). `table_real_gdp_index_compare` prints all four conventions (own,
+Laspeyres, Paasche, Fisher) side by side so you can see how index-sensitive the gap is.
 
 A few extra fields are `(steps × G × n_sims)` per-sector arrays (`G = 62`):
 `emis_base_sec` (base-case emissions split by sector — summing over the sector
@@ -482,6 +560,13 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     totinfl_base_v = Vector{Float64}[]; totinfl_carbon_v = Vector{Float64}[]  # domestic total inflation (GDP deflator)
     taxprod_base_v = Vector{Float64}[]; taxprod_carbon_v = Vector{Float64}[]
     gdp_base_v = Vector{Float64}[];     gdp_carbon_v = Vector{Float64}[]
+    # Common-deflator real GDP under two index conventions (both shaped (T+1 × n_sims)
+    # to mirror gdp_base/gdp_carbon; row 1 = the 2023Q4 initial point real_gdp carries):
+    #  * Laspeyres — both runs re-deflated by the matching (same-seed) BASE run's prices.
+    #  * Paasche   — both runs re-deflated by the matching (same-seed) CARBON run's prices.
+    # Fisher (geometric mean of the two gap ratios) is assembled after the loop.
+    gdp_base_common = zeros(T + 1, n_sims); gdp_carbon_common = zeros(T + 1, n_sims)  # Laspeyres
+    gdp_base_P = zeros(T + 1, n_sims);      gdp_carbon_P = zeros(T + 1, n_sims)        # Paasche
     cons_base_v = Vector{Float64}[];    cons_carbon_v = Vector{Float64}[]
     yg_base = zeros(n_sims);         yg_carbon = zeros(n_sims)
 
@@ -493,6 +578,10 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
         # within a repetition share the seed, so only the tax differs between them.
         Random.seed!(s)
         base = make_model(0.0)
+        # Per-quarter GDP decomposition for THIS base run; its price path becomes
+        # the common deflator for both members of this seed's base/carbon pair.
+        base_comps = Vector{NamedTuple}(undef, T)
+        gdp_base_common[1, s] = base.data.real_gdp[1]  # 2023Q4 init point (prices == 1)
         for t in 1:T
             Bit.step!(base; parallel = true, shock! = base_shock!)
             Bit.collect_data!(base)
@@ -504,6 +593,9 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
             dep_base_sec[t, :, s] = deposits_by_sector(base, G)
             unemp_base[t, s] = unemployment_rate(base)
             cpi_base[t, s] = base.agg.P_bar_HH
+            base_comps[t] = gdp_components(base)
+            # Base run deflated by its OWN price path: equals base.data.real_gdp.
+            gdp_base_common[t + 1, s] = real_gdp_common(base_comps[t], base_comps[t])
         end
         push!(infl_base_v, copy(base.data.gdp_deflator_growth_ea))
         push!(totinfl_base_v, total_inflation(base))
@@ -517,6 +609,12 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
         # the initial data point.
         Random.seed!(s)
         carbon = make_model(0.0)
+        # Per-quarter decomposition for THIS carbon run; its price path is the Paasche
+        # deflator for both members of this seed's base/carbon pair.
+        carbon_comps = Vector{NamedTuple}(undef, T)
+        gdp_carbon_common[1, s] = carbon.data.real_gdp[1]  # 2023Q4 init point (prices == 1)
+        gdp_base_P[1, s] = base.data.real_gdp[1]
+        gdp_carbon_P[1, s] = carbon.data.real_gdp[1]
         # Firm indices per split sector, for the technology-mix panel (abatement only).
         sector_idx = abatement ? [findall(==(sec), carbon.firms.G_i) for sec in split] : Vector{Int}[]
         for t in 1:T
@@ -530,6 +628,14 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
             unemp_carbon[t, s] = unemployment_rate(carbon)
             cpi_carbon[t, s] = carbon.agg.P_bar_HH
             lump_carbon[t, s] = carbon_dividend(carbon)
+            carbon_comps[t] = gdp_components(carbon)
+            # Laspeyres: both runs ÷ the matching BASE run's prices (base_comps), so the
+            # base-vs-carbon gap reflects volume only, valued at base-scenario prices.
+            gdp_carbon_common[t + 1, s] = real_gdp_common(carbon_comps[t], base_comps[t])
+            # Paasche: both runs ÷ the matching CARBON run's prices (carbon_comps).
+            # Carbon ÷ its own prices reproduces carbon's native real_gdp (sanity check).
+            gdp_base_P[t + 1, s] = real_gdp_common(base_comps[t], carbon_comps[t])
+            gdp_carbon_P[t + 1, s] = real_gdp_common(carbon_comps[t], carbon_comps[t])
             for (k, idx) in enumerate(sector_idx)
                 yr = carbon.firms.Y_i[idx[end]]
                 ren_share[k][t, s] = yr / sum(@view carbon.firms.Y_i[idx])
@@ -551,6 +657,14 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     gdp_base = reduce(hcat, gdp_base_v);         gdp_carbon = reduce(hcat, gdp_carbon_v)
     cons_base = reduce(hcat, cons_base_v);       cons_carbon = reduce(hcat, cons_carbon_v)
 
+    # Fisher carbon-vs-base gap ratio = geometric mean of the Laspeyres and Paasche
+    # gap ratios, taken at the RUN level (per seed, per quarter) BEFORE any cross-run
+    # averaging, so the geometric mean isn't distorted by averaging first. Row 1 is the
+    # shared 2023Q4 init point (base == carbon), so both ratios are 1 there → ratio_F = 1.
+    ratio_L = gdp_carbon_common ./ gdp_base_common   # Laspeyres carbon/base, per run
+    ratio_P = gdp_carbon_P ./ gdp_base_P             # Paasche carbon/base, per run
+    gdp_fisher_ratio = sqrt.(ratio_L .* ratio_P)     # (T+1 × n_sims), per run
+
     mode = abatement ? "WITH abatement" : "WITHOUT abatement"
 
     # Everything a `plot_*` / `table_*` needs, so callers can re-render without
@@ -566,6 +680,8 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
         prof_base_sec, prof_carbon_sec,
         dep_base_sec, dep_carbon_sec,
         gdp_base, gdp_carbon,
+        gdp_base_common, gdp_carbon_common,
+        gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
         cons_base, cons_carbon,
         unemp_base, unemp_carbon,
         cpi_base, cpi_carbon,
@@ -601,7 +717,8 @@ function run_comparison(;
         emis_base, emis_carbon, emis_base_sec,
         prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
         emp_carbon_sec, prof_carbon_sec, dep_base_sec, dep_carbon_sec,
-        gdp_base, gdp_carbon,
+        gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common,
+        gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
         cons_base, cons_carbon,
         unemp_base, unemp_carbon, cpi_base, cpi_carbon, lump_carbon, ren_share,
         split, mode, yg_base, yg_carbon,
@@ -627,7 +744,8 @@ function run_comparison(;
         # plot_deposits_polluters(dep_carbon_sec, emis_base_sec),  # carbon firm deposits (€): top-8 polluters vs rest
         # plot_deposits_polluters_base(dep_base_sec, emis_base_sec),  # base firm deposits (€): top-8 polluters vs rest
 
-        # plot_real_gdp(gdp_base, gdp_carbon),
+        # plot_real_gdp(gdp_base, gdp_carbon),  # own-deflator real GDP
+        # plot_real_gdp(gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common; common_deflator = true),  # common (baseline) deflator
         # plot_real_gdp_diff(gdp_base, gdp_carbon),  # real GDP as % vs base
         # plot_consumption(cons_base, cons_carbon),  # real consumer spending: base vs carbon
         # plot_consumption_diff(cons_base, cons_carbon),  # real consumer spending as % vs base
@@ -688,8 +806,14 @@ function run_comparison(;
         table_profit_polluters(prof_carbon_sec, emis_base_sec, sector_labels)      # carbon firm profits, indexed: polluters vs rest
         table_deposits_polluters(dep_carbon_sec, emis_base_sec, sector_labels)     # carbon firm deposits (€): polluters vs rest
         table_deposits_polluters_base(dep_base_sec, emis_base_sec, sector_labels)  # base firm deposits (€): polluters vs rest
-        table_real_gdp(gdp_base, gdp_carbon)
+        table_real_gdp(gdp_base, gdp_carbon)  # own-deflator real GDP
+        table_real_gdp(gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common; common_deflator = true)  # common (baseline) deflator
         table_real_gdp_diff(gdp_base, gdp_carbon)  # real GDP as % vs base
+        # Carbon-vs-base gap under own / Laspeyres / Paasche / Fisher deflators, side by side.
+        table_real_gdp_index_compare(
+            gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common,
+            gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
+        )
         table_consumption(cons_base, cons_carbon)  # real consumer spending: base vs carbon
         table_consumption_diff(cons_base, cons_carbon)  # real consumer spending as % vs base
         table_unemployment(unemp_base, unemp_carbon)
