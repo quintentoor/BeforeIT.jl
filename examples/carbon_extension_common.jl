@@ -304,8 +304,42 @@ tau_carbon_path = [
 # metals (15), chemicals (11). renewable_share is the clean firm's initial share
 # of that sector's size; renewable_intensity is its CO₂ intensity (usually 0).
 abatement_sectors = [
-    (sector = 24, renewable_share = 0.172, renewable_intensity = 0.0),  # electricity (NACE D), NL ~2023
+    (sector = 24, renewable_share = 0.464, renewable_intensity = 0.0),  # electricity (NACE D): NL renewable share 2023Q4 ≈ 46.4%
 ]
+# Initial (2023Q4) renewable share of the electricity sector. The split assigns this
+# fraction to a zero-emission renewable firm and scales the fossil firms' intensity
+# UP by 1/(1 - share) so the sector's INITIAL total emissions (hence its average
+# carbon intensity) are unchanged — see `split_sector_into_fossil_renewable!`.
+const RENEWABLE_SHARE_2023 = abatement_sectors[1].renewable_share  # 0.464
+
+# --- Manual renewable-capacity schedule (abatement run only) -------------------
+# The abatement carbon run follows the SAME regular carbon rules as the no-abatement
+# run (tax ramp + the existing price-weighted demand matching); on top of that we PIN
+# the single split sector's renewable firm capacity to this exogenous path (via
+# `Bit.RenewableCapacityPath`). `renewable_capacity_share[t]` is the renewable firm's
+# target share of the sector's TOTAL capacity in quarter t; the fossil firms are left
+# to the regular rules and the renewable firm's capital is set to `s/(1-s)·ΣK_fossil`,
+# so it is a NET capacity addition (the sector total grows). The old automatic,
+# price-driven reallocation (`CarbonTransition` / `reallocate_green_capacity!`) has
+# been removed.
+#
+# Trajectory: the NL renewable-electricity share rises from ≈46.4% (2023Q4) toward the
+# 2030 target of 76%. We make the share grow EXPONENTIALLY (a constant factor every
+# quarter) from the 2023Q4 baseline to hit 76% in 2030Q4 — exactly 7 years = 28
+# quarters after 2023Q4:
+#     s(q) = RENEWABLE_SHARE_2023 · g^q,   g = (0.76 / 0.464)^(1/28) ≈ 1.0178 (≈+1.8%/q)
+# where q is quarters after 2023Q4 (q = t here, since t = 1 is 2024Q1). The model only
+# runs to t = 20 (2028Q4), so the schedule covers the approach to the target (≈66% by
+# 2028Q4); 76% itself is reached at 2030Q4, beyond the simulation horizon. Edit
+# `RENEWABLE_SHARE_2030` / `QUARTERS_TO_2030` to retarget.
+const RENEWABLE_SHARE_2030 = 0.76   # NL renewable-electricity target for 2030
+const QUARTERS_TO_2030 = 28         # 2023Q4 → 2030Q4 (7 years)
+renewable_capacity_share = let s0 = RENEWABLE_SHARE_2023, s1 = RENEWABLE_SHARE_2030
+    g = (s1 / s0)^(1 / QUARTERS_TO_2030)  # quarterly growth factor to hit s1 at 2030Q4
+    [s0 * g^t for t in 1:T]
+end
+@assert length(renewable_capacity_share) == T
+@assert all(0 .< renewable_capacity_share .< 1)
 
 # --- Tracking helpers ----------------------------------------------------------
 # Total carbon emissions, using PER-FIRM intensities (fossil firms carry the CO₂,
@@ -517,9 +551,17 @@ dimension recovers `emis_base`; feeds `plot_emissions_stacked` /
 economy-wide employment.
 
 `abatement = true`  → both runs split every sector in `abatement_sectors` into a
-fossil + renewable firm, and the carbon run uses a `CarbonTransition` shock that
-ramps the tax AND reallocates capacity from fossil to renewable. Emissions can
-fall both by switching technology and by reduced demand.
+fossil + renewable firm. The carbon run follows the SAME regular carbon rules as the
+no-abatement run (a plain `CarbonTaxRamp` plus the existing price-weighted demand
+matching), and additionally PINS the renewable firm's capacity to the manual
+per-quarter schedule `renewable_capacity_share` via `RenewableCapacityPath` with
+`grow_production = true` (the old automatic price-driven reallocation,
+`CarbonTransition`, has been removed). The renewable firm both installs the scheduled
+capacity AND targets full-capacity production (its demand expectation is pinned to
+`K·κ`), so its output grows with the capacity rather than sitting idle behind its
+censored lagged demand; being the cheapest firm it sells what it makes through the
+regular matching. Emissions fall as output shifts from the fossil firms to the clean
+firm, on top of any reduction from lower demand.
 
 `abatement = false` → no sector is split. The carbon run uses a plain
 `CarbonTaxRamp` (tax only, no cleaner alternative to switch to), so emissions can
@@ -621,11 +663,22 @@ function simulate(;
         tau_carbon_0, tau_carbon_increment;
         start_time = tau_carbon_start, final_time = tau_carbon_final_time,
     )
-    # With abatement, the transition shock also reallocates capacity toward the
-    # renewable firms; without, the tax just ramps. Either way, combine it with the
-    # same productivity-growth and efficiency trends used in the base run.
-    carbon_shock = abatement ? Bit.CarbonTransition(ramp, split; rate = 0.3, max_step = 0.1) : ramp
-    shock! = Bit.CombinedShock(growth, efficiency, carbon_shock)
+    # With abatement, the carbon run follows the SAME regular carbon rules as the no-
+    # abatement run (the tax ramp + the existing price-weighted demand matching) and
+    # additionally pins the renewable firm's capacity to the manual per-quarter
+    # schedule `renewable_capacity_share` via `RenewableCapacityPath` — replacing the
+    # old automatic price-driven reallocation (`CarbonTransition`). `grow_production =
+    # true` makes the renewable firm target full-capacity production (its demand
+    # expectation is set to the installed K·κ), so output grows with the capacity
+    # instead of sitting idle behind the firm's censored, sold-out lagged demand.
+    # Without abatement, the tax just ramps. Either way it is combined with the same
+    # productivity-growth and efficiency trends used in the base run.
+    shock! = abatement ?
+        Bit.CombinedShock(
+            growth, efficiency, ramp,
+            Bit.RenewableCapacityPath(only(split), renewable_capacity_share; grow_production = true),
+        ) :
+        Bit.CombinedShock(growth, efficiency, ramp)
 
     # Monte-Carlo storage: one column per repetition, one row per timestep. The
     # hand-tracked series (emissions/unemployment/dividend/renewable share) are

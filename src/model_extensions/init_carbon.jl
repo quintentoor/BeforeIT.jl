@@ -101,90 +101,82 @@ end
 
 
 """
-    reallocate_green_capacity!(model, sector, rate, max_step)
+    RenewableCapacityPath(sector, share_path)
 
-Capacity-reallocation channel (fix B) for a split sector. This supplies the
-"build new capacity where it is cheapest" behaviour the base investment rule
-lacks (`I_d = (δ/κ)·min(Q_s, K·κ)` only ever *maintains* current capacity — a
-fully-utilised firm can never expand past its ceiling, so a price signal alone
-cannot move a capacity-capped sector's technology mix).
+A `step!` shock that MANUALLY pins the renewable firm's capacity in a split
+`sector` to an exogenous schedule. Use it alongside a plain [`CarbonTaxRamp`](@ref)
+so the carbon run otherwise follows the regular carbon-model rules: the tax raises
+the fossil firms' price via `cost_push_inflation` and the existing price-weighted
+demand matching shifts demand toward the cheaper renewable firm — but the renewable
+firm's capacity no longer grows endogenously, it is set here.
 
-Within `sector`, the cleanest firm (lowest `carbon_intensity_i`) is the sink.
-For every dirtier firm `f` we move a fraction `φ_f = clamp(rate · gap_f, 0, max_step)`
-of *both* its capital `K_i` and its realised-demand signal `Q_d_i` to the clean
-firm, where `gap_f = (P_f − P_clean) / P_clean ≥ 0` is the dirty firm's relative
-price disadvantage (which the carbon tax creates and widens over time).
+`share_path[t]` is the renewable firm's target share of the sector's TOTAL capacity
+in quarter `t = model.agg.t` (`t` beyond the path length holds the last entry). The
+fossil firms are left untouched — they follow the regular investment/depreciation
+rules — and the renewable firm's capital is set so it holds `share_path[t]` of the
+total, given the fossil firms' CURRENT capital:
 
-Moving capital **and** demand together is essential: capital alone would sit idle
-(the clean firm's censored `Q_d_i` keeps its labour/output target small), and
-demand alone would hit the clean firm's capacity ceiling. Moved together, the
-clean firm scales up consistently — it hires the workers the shrinking fossil
-firm sheds, invests into its larger demand, and raises output — while sector
-totals (capital and demand) are conserved, matching a near-frozen-capacity
-economy where the transition must be a *reallocation*, not net growth.
+    K_ren = s / (1 - s) * Σ K_fossil,   s = share_path[t]
 
-Runs at the top of `step!` (before firm decisions), so the moved `K_i`/`Q_d_i`
-feed this quarter's expectations, employment, investment and production. With no
-tax (prices equal ⇒ `gap ≤ 0`) it is a no-op, preserving the baseline.
+so the renewable capacity is a NET addition on top of fossil capacity (the sector's
+total capacity grows). With `s` equal to the construction-time `renewable_share`,
+quarter 1 reproduces the initial split.
+
+Two consequences to be aware of:
+- The reference is the fossil firms' CURRENT capital, so if the tax shrinks fossil
+  output (and hence fossil K) the renewable target for a fixed share shrinks with it.
+  To peg the path to the FIXED initial sector capacity instead, capture `ΣK_fossil`
+  at t == 1 and scale from that.
+- The added capacity is exogenous and UNFINANCED (it is not the result of the firm's
+  investment spending), so the renewable firm's capital account is not stock-flow
+  consistent — its equity `E_i` jumps with the injected `K_i`. This is the intended
+  "capacity-availability" experiment, not a financed buildout.
+
+By default only `K_i` is set (capacity) and demand is left to the regular
+price-weighted matching. But the base firm produces to its EXPECTED demand
+(`Q_s_i = Q_d_i·(1+γ_e)`), not to its capacity, and that expectation is its own
+lagged realised sales — which, for a cheap firm that sells out every quarter, never
+exceeds its own supply. So the installed capacity sits idle: output stays pinned to
+the censored demand signal while `K·κ` runs far ahead of it.
+
+Pass `grow_production = true` to close that gap: each quarter the renewable firm's
+demand expectation `Q_d_i` is set to its capacity ceiling `K_i·κ_i`, so the
+downstream decision step targets `Q_s_i = K·κ·(1+γ_e) ≥ K·κ` and the firm hires the
+labour and buys the materials to PRODUCE at the installed capacity (output is then
+capacity-bound, subject to labour/material availability). Being the cheapest firm it
+still sells what it makes through the regular matching, so production — and the
+renewable share of output — grows with the capacity rather than lagging it.
+
+Runs at the top of `step!` (before firm decisions), so both the set capacity and the
+raised expectation feed that quarter's employment, investment and production. Compose
+it with the tax ramp and trend shocks via [`CombinedShock`](@ref).
 """
-function reallocate_green_capacity!(model::AbstractModelCarbon, sector::Int, rate::Bit.typeFloat, max_step::Bit.typeFloat)
+struct RenewableCapacityPath <: Bit.AbstractShock
+    sector::Int
+    share_path::Vector{Bit.typeFloat}
+    grow_production::Bool
+end
+RenewableCapacityPath(sector::Integer, share_path::AbstractVector{<:Real}; grow_production::Bool = false) =
+    RenewableCapacityPath(Int(sector), Vector{Bit.typeFloat}(share_path), grow_production)
+
+function (s::RenewableCapacityPath)(model::AbstractModelCarbon)
     firms = model.firms
-    idx = findall(==(sector), firms.G_i)
-    length(idx) < 2 && return model
-
-    # cleanest firm in the sector is the sink for reallocated capacity/demand
-    c = idx[argmin(@view firms.carbon_intensity_i[idx])]
-    P_clean = firms.P_i[c]
-    P_clean > 0 || return model
-
-    for f in idx
-        f == c && continue
-        gap = (firms.P_i[f] - P_clean) / P_clean
-        gap <= 0 && continue
-        phi = clamp(rate * gap, zero(Bit.typeFloat), max_step)
-        dK = phi * firms.K_i[f]
-        dQ = phi * firms.Q_d_i[f]
-        firms.K_i[f] -= dK; firms.K_i[c] += dK
-        firms.Q_d_i[f] -= dQ; firms.Q_d_i[c] += dQ
-    end
-    return model
-end
-
-
-"""
-    CarbonTransition(ramp, sectors; rate = 0.3, max_step = 0.1)
-
-A composite `step!` shock that drives an energy-transition scenario: it applies
-the `CarbonTaxRamp` `ramp` (setting `tau_carbon` for the quarter) and then runs
-`reallocate_green_capacity!` on each split sector, shifting capital and demand
-from the fossil firms to the renewable firm at a pace set by the tax-driven price
-gap. `sectors` may be a single sector index or a list of them (one abatement
-strategy per split sector).
-
-- `rate`: reallocation speed — fraction of a dirty firm's capital/demand moved
-  per unit of relative price gap, per quarter.
-- `max_step`: per-quarter cap on the moved fraction (numerical safety).
-
-Use with a sector-split `ModelCarbon` (see the `split_sector` constructor arg).
-"""
-struct CarbonTransition <: Bit.AbstractShock
-    ramp::CarbonTaxRamp
-    sectors::Vector{Int}
-    rate::Bit.typeFloat
-    max_step::Bit.typeFloat
-end
-function CarbonTransition(
-        ramp::CarbonTaxRamp, sectors::Union{Integer, AbstractVector{<:Integer}};
-        rate::Real = 0.3, max_step::Real = 0.1,
-    )
-    secs = sectors isa Integer ? [Int(sectors)] : Int.(sectors)
-    return CarbonTransition(ramp, secs, Bit.typeFloat(rate), Bit.typeFloat(max_step))
-end
-
-function (s::CarbonTransition)(model::AbstractModelCarbon)
-    s.ramp(model)
-    for sector in s.sectors
-        reallocate_green_capacity!(model, sector, s.rate, s.max_step)
+    idx = findall(==(s.sector), firms.G_i)
+    length(idx) >= 2 || return nothing  # nothing to do if the sector was not split
+    ren = idx[end]                       # the appended renewable firm (cf. the split constructor)
+    foss = @view idx[1:(end - 1)]
+    t = clamp(model.agg.t, 1, length(s.share_path))
+    share = s.share_path[t]
+    (zero(share) <= share < one(share)) ||
+        error("renewable capacity share must be in [0, 1), got $share at t = $(model.agg.t)")
+    K_foss = sum(@view firms.K_i[foss])
+    firms.K_i[ren] = share / (1 - share) * K_foss
+    # Let production grow with capacity: target full-capacity utilisation by pinning
+    # the demand expectation to the capacity ceiling K·κ (the decision step then sizes
+    # employment/materials/investment to fill it), instead of leaving output stuck at
+    # the firm's censored, sold-out lagged demand.
+    if s.grow_production
+        firms.Q_d_i[ren] = firms.K_i[ren] * firms.kappa_i[ren]
     end
     return nothing
 end
@@ -245,8 +237,7 @@ with `annual_rate = 0` it is a no-op and the original constant-intensity behavio
 is recovered exactly.
 
 Because it scales every firm's intensity by the *same* factor, it leaves the
-relative ranking of dirty/clean firms unchanged (so the abatement reallocation in
-[`reallocate_green_capacity!`](@ref) is unaffected), and with `tau_carbon == 0` it
+relative ranking of dirty/clean firms unchanged, and with `tau_carbon == 0` it
 changes only the tracked emissions, not prices. Runs at the top of `step!` (before
 firms set prices and decisions), so the reduced intensity feeds that quarter's
 emissions and — when a tax is on — its cost-push pricing. Compose it with the
@@ -276,7 +267,7 @@ end
 
 Apply several `step!` shocks in sequence within each quarter, in the order given.
 Use it to run a [`ProductivityGrowth`](@ref) trend alongside a
-[`CarbonTaxRamp`](@ref) / [`CarbonTransition`](@ref), e.g.
+[`CarbonTaxRamp`](@ref) / [`RenewableCapacityPath`](@ref), e.g.
 
     shock! = Bit.CombinedShock(Bit.ProductivityGrowth(0.01), ramp)
 

@@ -213,8 +213,8 @@ using Test
 
     # Multi-sector split — splitting several sectors must append one renewable
     # firm per sector, preserve each split sector's initial emissions, and let a
-    # multi-sector `CarbonTransition` raise every renewable firm's output share.
-    @testset "multi-sector split + transition" begin
+    # per-sector `RenewableCapacityPath` pin every renewable firm's CAPACITY share.
+    @testset "multi-sector split + capacity path" begin
         Random.seed!(2024)
         base = Bit.Model(parameters, initial_conditions)
         # Split the two sectors with the most employment, so each has plenty of
@@ -249,22 +249,35 @@ using Test
             @test isapprox(sector_em, intensity[s] * sum(model.firms.Y_i[idx]); rtol = 1.0e-10)
         end
 
-        # A multi-sector transition under a real tax must raise the renewable
-        # output share in every split sector.
-        function ren_share(m, s)
-            idx = findall(==(s), m.firms.G_i)
-            return m.firms.Y_i[idx[end]] / sum(m.firms.Y_i[idx])
+        # `RenewableCapacityPath` must pin each renewable firm's CAPACITY to the
+        # scheduled share of its sector's total capital, as a NET addition (the
+        # fossil firms' capital is left untouched).
+        target = 0.5
+        for s in split
+            idx = findall(==(s), model.firms.G_i)
+            ren = idx[end]
+            foss = idx[1:(end - 1)]
+            K_foss_before = copy(model.firms.K_i[foss])
+            Bit.RenewableCapacityPath(s, fill(target, T))(model)  # apply the shock directly
+            @test model.firms.K_i[foss] == K_foss_before          # fossil capital untouched
+            @test isapprox(
+                model.firms.K_i[ren] / sum(model.firms.K_i[idx]), target; rtol = 1.0e-10,
+            )
         end
-        share0 = [ren_share(model, s) for s in split]
 
-        ramp = Bit.CarbonTaxRamp(0.2, 0.1)
-        transition = Bit.CarbonTransition(ramp, split; rate = 0.3, max_step = 0.1)
-        for _ in 1:8
-            Bit.step!(model; parallel = false, shock! = transition)
-            Bit.collect_data!(model)
+        # `grow_production = true` additionally pins the renewable firm's demand
+        # expectation Q_d_i to its capacity ceiling K·κ, so its production target
+        # tracks the installed capacity instead of its lagged sales; the default
+        # (false) leaves Q_d_i untouched.
+        for s in split
+            idx = findall(==(s), model.firms.G_i)
+            ren = idx[end]
+            Qd_before = model.firms.Q_d_i[ren]
+            Bit.RenewableCapacityPath(s, fill(target, T))(model)  # default: no demand nudge
+            @test model.firms.Q_d_i[ren] == Qd_before
+            Bit.RenewableCapacityPath(s, fill(target, T); grow_production = true)(model)
+            @test model.firms.Q_d_i[ren] == model.firms.K_i[ren] * model.firms.kappa_i[ren]
         end
-        share1 = [ren_share(model, s) for s in split]
-        @test all(share1 .> share0)
     end
 
     # No-recycling variant — `ModelCarbonNoLump` charges the SAME carbon tax as
