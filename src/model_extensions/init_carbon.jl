@@ -46,7 +46,18 @@ Bit.@object mutable struct GovernmentCarbon(Government) <: AbstractGovernmentCar
     sb_carbon::Bit.typeFloat # real per-household carbon dividend recycled this quarter
 end
 
-Bit.@object mutable struct ModelCarbon(Bit.Model) <: Bit.AbstractModel end
+# Both carbon-tax model variants subtype this, so every carbon channel below (the
+# price pass-through, the firm/government tax flows, the GVA-identity data tracking
+# and the shocks) is written ONCE against `AbstractModelCarbon` and shared. The ONLY
+# thing that differs between the two concrete types is what the government does with
+# the revenue it collects, handled in `set_gov_social_benefits!`:
+#   * `ModelCarbon`       — recycles the revenue to households as an equal lump-sum
+#                           dividend (budget-neutral; see `set_gov_social_benefits!`).
+#   * `ModelCarbonNoLump` — retains the revenue (no dividend), so it lowers the
+#                           government deficit instead of feeding household demand.
+abstract type AbstractModelCarbon <: Bit.AbstractModel end
+Bit.@object mutable struct ModelCarbon(Bit.Model) <: AbstractModelCarbon end
+Bit.@object mutable struct ModelCarbonNoLump(Bit.Model) <: AbstractModelCarbon end
 
 
 """
@@ -77,7 +88,7 @@ end
 CarbonTaxRamp(tau_carbon_0, increment; start_time = 1, final_time = typemax(Int)) =
     CarbonTaxRamp(Bit.typeFloat(tau_carbon_0), Bit.typeFloat(increment), start_time, final_time)
 
-function (s::CarbonTaxRamp)(model::ModelCarbon)
+function (s::CarbonTaxRamp)(model::AbstractModelCarbon)
     t = model.agg.t
     if t < s.start_time
         model.firms.tau_carbon = zero(Bit.typeFloat)
@@ -116,7 +127,7 @@ Runs at the top of `step!` (before firm decisions), so the moved `K_i`/`Q_d_i`
 feed this quarter's expectations, employment, investment and production. With no
 tax (prices equal ⇒ `gap ≤ 0`) it is a no-op, preserving the baseline.
 """
-function reallocate_green_capacity!(model::ModelCarbon, sector::Int, rate::Bit.typeFloat, max_step::Bit.typeFloat)
+function reallocate_green_capacity!(model::AbstractModelCarbon, sector::Int, rate::Bit.typeFloat, max_step::Bit.typeFloat)
     firms = model.firms
     idx = findall(==(sector), firms.G_i)
     length(idx) < 2 && return model
@@ -170,7 +181,7 @@ function CarbonTransition(
     return CarbonTransition(ramp, secs, Bit.typeFloat(rate), Bit.typeFloat(max_step))
 end
 
-function (s::CarbonTransition)(model::ModelCarbon)
+function (s::CarbonTransition)(model::AbstractModelCarbon)
     s.ramp(model)
     for sector in s.sectors
         reallocate_green_capacity!(model, sector, s.rate, s.max_step)
@@ -251,7 +262,7 @@ function CarbonEfficiency(annual_rate; start_time::Integer = 1, final_time::Inte
     return CarbonEfficiency(qf, Int(start_time), Int(final_time))
 end
 
-function (s::CarbonEfficiency)(model::ModelCarbon)
+function (s::CarbonEfficiency)(model::AbstractModelCarbon)
     t = model.agg.t
     if s.start_time <= t <= s.final_time
         model.firms.carbon_intensity_i .*= s.quarterly_factor
@@ -290,7 +301,7 @@ end
 # (the tax raises AC_i without raising P_i in the same quarter, so the gap opens and
 # passes through over the following quarters as the firm closes it). κ sets only the
 # speed; the full nominal tax reaches prices in the long run (no permanent leak).
-function Bit.cost_push_inflation(firms::FirmsCarbon, model::ModelCarbon)
+function Bit.cost_push_inflation(firms::FirmsCarbon, model::AbstractModelCarbon)
     kappa = model.prop.kappa_cp
     AC_i = Bit.average_cost(firms, model) .+ firms.tau_carbon .* firms.carbon_intensity_i
     mu_i = 1.0 ./ firms.AC_i_0
@@ -299,7 +310,7 @@ end
 
 
 # 2. Tax-flow channel — profits side. Subtract the carbon tax from firm profits.
-function Bit.firms_profits(model::ModelCarbon)
+function Bit.firms_profits(model::AbstractModelCarbon)
     firms = model.firms
 
     P_bar_HH, tau_SIF, r, r_bar = model.agg.P_bar_HH, model.prop.tau_SIF, model.bank.r, model.cb.r_bar
@@ -323,7 +334,7 @@ end
 
 
 # 2. Tax-flow channel — deposits side. Drain the same amount from firm cash.
-function Bit.firms_deposits(model::ModelCarbon)
+function Bit.firms_deposits(model::AbstractModelCarbon)
     firms = model.firms
 
     tau_FIRM, tau_SIF, theta_DIV = model.prop.tau_FIRM, model.prop.tau_SIF, model.prop.theta_DIV
@@ -353,7 +364,7 @@ end
 
 
 # 2. Tax-flow channel — government side. Government revenue grows by the same amount.
-function Bit.gov_revenues(model::ModelCarbon)
+function Bit.gov_revenues(model::AbstractModelCarbon)
     Y_G_base = @invoke Bit.gov_revenues(model::Bit.AbstractModel)
     firms = model.firms
     carbon = sum(firms.tau_carbon .* firms.carbon_intensity_i .* firms.Y_i)
@@ -386,10 +397,25 @@ function Bit.set_gov_social_benefits!(model::ModelCarbon)
 end
 
 
+# No-recycling variant — the carbon revenue is RETAINED by the government, not
+# handed back to households. This is the ONLY behavioural difference from
+# `ModelCarbon`: we deliberately skip the lump-sum dividend and just grow the clean
+# `sb_other` baseline (the plain base method). The revenue still flows in through the
+# `gov_revenues` override above, so — with social spending unchanged — it shrinks the
+# government deficit (`gov_loans`) instead of feeding household demand. (`sb_carbon`
+# stays at its initial zero here, so no de-compounding is needed.) Defining this
+# explicitly rather than relying on the base-method fallback documents the intent and
+# guards against a future `set_gov_social_benefits!(::AbstractModelCarbon)` capturing it.
+function Bit.set_gov_social_benefits!(model::ModelCarbonNoLump)
+    @invoke Bit.set_gov_social_benefits!(model::Bit.AbstractModel)
+    return model
+end
+
+
 # Data tracker overrides — keep the GVA identity intact by routing the carbon
 # tax through both `operating_surplus` (firm pays) and `taxes_production`
 # (government collects), exactly as `tau_K` is already routed.
-function Bit.update_data_init!(m::ModelCarbon)
+function Bit.update_data_init!(m::AbstractModelCarbon)
     @invoke Bit.update_data_init!(m::Bit.AbstractModel)
     firms = m.firms
     carbon = sum(firms.tau_carbon .* firms.carbon_intensity_i .* firms.Y_i)
@@ -398,7 +424,7 @@ function Bit.update_data_init!(m::ModelCarbon)
     return m
 end
 
-function Bit.update_data_step!(m::ModelCarbon)
+function Bit.update_data_step!(m::AbstractModelCarbon)
     @invoke Bit.update_data_step!(m::Bit.AbstractModel)
     t = length(m.data.collection_time)
     firms = m.firms
@@ -449,7 +475,33 @@ intermediate (firm) and final (household) demand toward the cheaper renewable fi
 With `tau_carbon == 0` and `split_sector === nothing` the model is observationally
 equivalent to the base `Bit.Model` (regression test guard).
 """
-function ModelCarbon(
+ModelCarbon(parameters::Dict{String, Any}, initial_conditions::Dict{String, Any}; kwargs...) =
+    _build_carbon_model(ModelCarbon, parameters, initial_conditions; kwargs...)
+
+"""
+    ModelCarbonNoLump(parameters, initial_conditions; tau_carbon, carbon_intensity_s,
+                      split_sector, renewable_share, renewable_intensity)
+
+Carbon-tax model variant that does NOT recycle the tax revenue. Identical to
+[`ModelCarbon`](@ref) in every respect — same per-sector carbon tax, same price
+pass-through (`cost_push_inflation`), same firm tax flows (`firms_profits` /
+`firms_deposits`), same government collection (`gov_revenues`), same GVA-identity
+data tracking, and the same optional dirty/clean sector split — EXCEPT the collected
+revenue is RETAINED by the government instead of being handed back to households as
+the equal lump-sum dividend `ModelCarbon` pays. With social spending unchanged, the
+retained revenue lowers the government deficit (`gov_loans`); households get no
+dividend, so they feel the tax's price pass-through without the offsetting transfer.
+Takes exactly the same keyword arguments as [`ModelCarbon`](@ref).
+"""
+ModelCarbonNoLump(parameters::Dict{String, Any}, initial_conditions::Dict{String, Any}; kwargs...) =
+    _build_carbon_model(ModelCarbonNoLump, parameters, initial_conditions; kwargs...)
+
+# Shared builder for both carbon-tax model variants: assemble the agents from the
+# calibration and wrap them in the requested concrete type `M`. Construction is
+# identical for both variants — they differ only in `set_gov_social_benefits!`
+# (revenue recycling), so there is exactly one assembly path here.
+function _build_carbon_model(
+        ::Type{M},
         parameters::Dict{String, Any},
         initial_conditions::Dict{String, Any};
         tau_carbon::Real = 0.05,
@@ -457,7 +509,7 @@ function ModelCarbon(
         split_sector::Union{Nothing, Integer, AbstractVector{<:Integer}} = nothing,
         renewable_share::Union{Real, AbstractVector{<:Real}} = 0.0,
         renewable_intensity::Union{Real, AbstractVector{<:Real}} = 0.0,
-    )
+    ) where {M <: AbstractModelCarbon}
     p, ic = parameters, initial_conditions
 
     G = Int(p["G"])
@@ -526,7 +578,7 @@ function ModelCarbon(
     properties = Bit.Properties(p, ic)
     data = Bit.Data()
 
-    return ModelCarbon(
+    return M(
         (
             workers_act, workers_inact, firms, bank, central_bank, government, rotw, agg, properties, data,
         )

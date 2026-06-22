@@ -266,4 +266,84 @@ using Test
         share1 = [ren_share(model, s) for s in split]
         @test all(share1 .> share0)
     end
+
+    # No-recycling variant — `ModelCarbonNoLump` charges the SAME carbon tax as
+    # `ModelCarbon` but RETAINS the revenue instead of paying it back as a lump-sum
+    # dividend. It must (a) reproduce the base model bit-for-bit at tau_carbon == 0,
+    # (b) under a real tax collect revenue (gov.Y_G rises) while paying NO dividend
+    # (gov.sb_carbon stays 0, unlike the recycling model) and so end with lower
+    # government debt than the recycling model, and (c) preserve every accounting
+    # identity — money raised flows firms → government with no leakage even though it
+    # is not handed back.
+    @testset "ModelCarbonNoLump retains revenue (no recycling)" begin
+        # (a) tau_carbon == 0 ⇒ identical to the base model, same seed. Includes
+        # sb_other: with no tax there is no dividend, so the transfer path matches base.
+        Random.seed!(42)
+        base = Bit.Model(parameters, initial_conditions)
+        for _ in 1:T
+            Bit.step!(base; parallel = false)
+            Bit.collect_data!(base)
+        end
+        Random.seed!(42)
+        nl0 = Bit.ModelCarbonNoLump(parameters, initial_conditions; tau_carbon = 0.0)
+        for _ in 1:T
+            Bit.step!(nl0; parallel = false)
+            Bit.collect_data!(nl0)
+        end
+        @test isapprox(nl0.firms.P_i, base.firms.P_i; atol = 1.0e-10)
+        @test isapprox(nl0.firms.Y_i, base.firms.Y_i; atol = 1.0e-10)
+        @test isapprox(nl0.gov.Y_G, base.gov.Y_G; atol = 1.0e-10)
+        @test isapprox(nl0.gov.sb_other, base.gov.sb_other; atol = 1.0e-10)
+        @test nl0.gov.sb_carbon == 0.0  # no dividend ever computed
+
+        # (b) Under a real tax: nolump collects revenue but recycles nothing, whereas
+        # the lump-sum model pays a positive dividend. Same seed/intensities for both;
+        # also a no-tax nolump reference to show revenue is genuinely collected.
+        intensity = ones(Float64, G)
+        intensity[1] = 5.0  # sector 1 visibly dirty so the carbon flow is non-trivial
+
+        Random.seed!(123)
+        notax = Bit.ModelCarbonNoLump(parameters, initial_conditions; tau_carbon = 0.0, carbon_intensity_s = intensity)
+        for _ in 1:T
+            Bit.step!(notax; parallel = false)  # no shock ⇒ tau stays 0
+            Bit.collect_data!(notax)
+        end
+
+        ramp = Bit.CarbonTaxRamp(0.2, 0.1)
+        Random.seed!(123)
+        nl = Bit.ModelCarbonNoLump(parameters, initial_conditions; tau_carbon = 0.0, carbon_intensity_s = intensity)
+        Random.seed!(123)
+        lump = Bit.ModelCarbon(parameters, initial_conditions; tau_carbon = 0.0, carbon_intensity_s = intensity)
+        for _ in 1:T
+            Bit.step!(nl; parallel = false, shock! = ramp)
+            Bit.collect_data!(nl)
+            Bit.step!(lump; parallel = false, shock! = ramp)
+            Bit.collect_data!(lump)
+        end
+
+        @test nl.firms.tau_carbon > 0                 # the tax is on
+        @test nl.gov.Y_G > notax.gov.Y_G              # revenue is collected vs a no-tax run
+        @test nl.gov.sb_carbon == 0.0                 # nolump pays NO dividend
+        @test lump.gov.sb_carbon > 0.0                # the recycling model does
+        @test lump.gov.sb_other > nl.gov.sb_other     # recycling lifts transfers above nolump
+        @test nl.gov.L_G < lump.gov.L_G               # retained revenue ⇒ lower gov debt
+
+        # (c) Every accounting identity still holds for the no-recycling model.
+        zero_gva = sum(
+            nl.data.nominal_gva - nl.data.compensation_employees -
+                nl.data.operating_surplus - nl.data.taxes_production,
+        )
+        @test isapprox(zero_gva, 0.0, atol = 1.0e-8)
+        zero_gdp = sum(
+            nl.data.nominal_gdp - nl.data.nominal_household_consumption -
+                nl.data.nominal_government_consumption - nl.data.nominal_capitalformation -
+                nl.data.nominal_exports + nl.data.nominal_imports,
+        )
+        @test isapprox(zero_gdp, 0.0, atol = 1.0e-8)
+        zero_cb = nl.cb.E_CB + nl.rotw.D_RoW - nl.gov.L_G + nl.bank.D_k
+        @test isapprox(zero_cb, 0.0, atol = 1.0e-8)
+        tot_D_h = sum(nl.w_act.D_h) + sum(nl.w_inact.D_h) + sum(nl.firms.D_h) + nl.bank.D_h
+        zero_bank = sum(nl.firms.D_i) + tot_D_h + sum(nl.bank.E_k) - sum(nl.firms.L_i) - nl.bank.D_k
+        @test isapprox(zero_bank, 0.0, atol = 1.0e-8)
+    end
 end

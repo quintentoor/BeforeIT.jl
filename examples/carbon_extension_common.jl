@@ -40,6 +40,9 @@ include(joinpath(CARBON_PLOT_DIR, "plot_employment_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_profit_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_deposits_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_alt.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_nolump.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_carbon_tax_paid.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_consumption.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_consumption_diff.jl"))
@@ -158,6 +161,48 @@ intensity = [
     0.000024,   # 62  S96     Other personal services
 ]
 @assert length(intensity) == 62
+
+# --- "alt_tax" robustness model: flat (uniform) carbon intensity ---------------
+# Robustness check for WHY the carbon run's real GDP comes out ABOVE base. Two
+# channels could lift it: (a) the tax reshuffles activity toward cleaner (less
+# taxed) sectors, or (b) the lump-sum carbon dividend recycled to households boosts
+# demand. The `alt_tax` model is IDENTICAL to the carbon model (same tax ramp, same
+# shocks, same revenue recycling) EXCEPT every sector is given the SAME carbon
+# intensity. With a uniform intensity the tax becomes a flat levy on output (every
+# firm pays `tau_carbon · intensity_alt · Y_i`), so it can no longer tilt relative
+# prices across sectors — channel (a) is switched off. If real GDP is STILL above
+# base under `alt_tax`, the lump-sum dividend — not the sectoral reallocation — is
+# what drives the result.
+#
+# The flat rate is the OUTPUT-WEIGHTED mean intensity (each sector weighted by its
+# baseline gross output Y_i), NOT the plain sector mean. This is the single uniform
+# rate whose levy on total output raises the SAME total carbon tax — and hence the
+# same lump-sum dividend — as the real per-sector intensities at baseline:
+#     Σ_i intensity_alt · Y_i = Σ_i intensity_{g(i)} · Y_i  ⟺  intensity_alt =
+#     Σ_i intensity_{g(i)} Y_i / Σ_i Y_i.
+# The plain mean would OVER-tax: the big low-intensity service sectors get the
+# average rate, so alt would collect far more than the carbon run (≈1.8× here) and
+# the two dividends would no longer be comparable. With the paid tax matched, any
+# real-GDP gap between the alt_tax and carbon runs reflects the tax's INCIDENCE
+# (uniform vs sectoral), not how much cash is recycled. (Use `mean(intensity)` for
+# the plain unweighted mean if you want the un-matched version instead.) Y_i is set
+# at construction and is seed-independent, so one no-tax model gives the weights.
+#
+# Baseline weighting alone matches the two runs only at t = 1: over the run the
+# carbon tax shifts output away from dirty (high-intensity) sectors, so the carbon
+# run's tax base shrinks while the uniform levy's base does not, leaving the alt run
+# paying ≈5% MORE tax on AVERAGE. `ALT_INTENSITY_SCALE` shaves the flat rate to
+# correct for that, so the two runs pay the same tax averaged over the 20 quarters,
+# not just at t = 1. The default was calibrated (abatement = false): at scale 1.0
+# alt overshoots by ≈+4.8% on average, and 0.955 brings it to ≈0%. Tune it from
+# `table_carbon_tax_paid_diff`: if alt is still X% high, multiply the scale by
+# 1/(1 + X/100) and re-run (one iteration converges). It can also be overridden per
+# call via `simulate(; alt_intensity_scale = …)`.
+ALT_INTENSITY_SCALE = 0.955  # calibrated: zeroes the ~4.8% average tax overshoot
+intensity_alt = let m0 = Bit.ModelCarbon(parameters, initial_conditions; carbon_intensity_s = intensity)
+    fill(sum(m0.firms.carbon_intensity_i .* m0.firms.Y_i) / sum(m0.firms.Y_i), length(intensity))
+end
+@assert length(intensity_alt) == 62
 
 # Human-readable label per sector, in the SAME 62-sector ordering as `intensity`
 # above (NACE code + short name). Used to label the stacked per-sector emissions
@@ -353,6 +398,13 @@ end
 carbon_dividend(model) =
     sum(model.firms.tau_carbon .* model.firms.carbon_intensity_i .* model.firms.Y_i) / model.prop.H
 
+# Total carbon tax PAID by firms this quarter, in euros: Σ_i tau_carbon · intensity_i · Y_i.
+# This is exactly the carbon revenue the government collects and recycles, i.e.
+# `carbon_dividend(model) · model.prop.H`. Tracked for the carbon and alt_tax runs so
+# their tax burdens can be compared — and matched (see `intensity_alt`).
+carbon_tax_paid(model) =
+    sum(model.firms.tau_carbon .* model.firms.carbon_intensity_i .* model.firms.Y_i)
+
 # Unemployment rate over the active workforce: O_h == 0 means unemployed.
 unemployment_rate(model) = count(==(0), model.w_act.O_h) / length(model.w_act.O_h)
 
@@ -424,7 +476,8 @@ real_gdp_common(nom, base_P) =
 
 
 """
-    simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0)
+    simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0,
+             alt_tax::Bool = true)
 
 Run the base (no-tax) vs carbon-tax Monte-Carlo and return the collected data as a
 `NamedTuple`. This is the expensive step — it does NOT plot or print anything.
@@ -473,6 +526,39 @@ fall both by switching technology and by reduced demand.
 fall only through reduced output/demand. This isolates the pure tax effect and is
 the cleaner control for judging how much the abatement channel is doing.
 
+`alt_tax` (default `true`) adds a THIRD Monte-Carlo leg — a flat-intensity
+robustness model that probes WHY the carbon run's real GDP comes out above base. It
+is the carbon model with every sector given the same carbon intensity
+(`intensity_alt`, the OUTPUT-WEIGHTED mean), so its tax is a uniform levy on output
+that recycles the SAME total dividend as the carbon run yet cannot reshuffle
+activity toward cleaner sectors; only the lump-sum dividend can still lift real GDP.
+It shares the carbon run's seed and shock, and only its macro series are tracked:
+`gdp_alt`/`gdp_alt_common` (own- and base-price/Laspeyres real GDP), `cons_alt`,
+`unemp_alt`, `cpi_alt`, `lump_alt` (per-household dividend), `tax_alt` (total tax
+paid = total lump-sum recycled, the carbon run's counterpart is `tax_carbon`), and
+`yg_alt`. Set `alt_tax = false` to skip the extra leg (the fields are then returned
+as zero matrices). Feed these to `table_real_gdp_base_vs_alt` /
+`table_real_gdp_diff_base_vs_alt` / `plot_real_gdp_base_vs_alt` and
+`table_carbon_tax_paid` / `plot_carbon_tax_paid` (carbon-vs-alt tax burden).
+
+`alt_intensity_scale` (default `ALT_INTENSITY_SCALE`) multiplies the alt run's flat
+intensity. The output-weighted mean matches the carbon run's tax only at baseline;
+this scalar shaves it so the two pay the same tax AVERAGED over the run (the default
+is calibrated to ≈0% average overshoot for `abatement = false`). Tune it from
+`table_carbon_tax_paid_diff`.
+
+`nolump` (default `true`) adds a FOURTH Monte-Carlo leg — the carbon model with the
+revenue NOT recycled (built with `Bit.ModelCarbonNoLump`). It charges the SAME tax as
+the carbon run (same real per-sector `intensity`, same seed, same shock) but the
+government RETAINS the revenue rather than paying it back as the lump-sum dividend, so
+it lowers the deficit instead of feeding household demand. base-vs-nolump therefore
+shows the tax's contractionary side stripped of the offsetting transfer — and the gap
+between the carbon and nolump runs is exactly what the lump-sum recycling adds. Only
+real GDP is tracked: `gdp_nolump`/`gdp_nolump_common` (own- and base-price/Laspeyres),
+plus `yg_nolump` (gov revenue). Set `nolump = false` to skip it (fields return as zero
+matrices). Feed these to `plot_real_gdp_base_vs_nolump` / `table_real_gdp_base_vs_nolump`
+and the `_diff_` variants.
+
 `carbon_efficiency_annual` (OPTIONAL robustness knob, default `0.0` = off) sets a
 trend decline in every sector's CO₂ intensity, in % per YEAR (applied in quarterly
 steps via `Bit.CarbonEfficiency`). Empirically Dutch total emissions fall over time
@@ -490,23 +576,32 @@ between them is the carbon tax itself — the comparison stays clean per run whi
 the band across runs shows estimation uncertainty. Each `plot_*` shows the cross-run
 mean as a line with a 95% confidence-interval ribbon (mean ± 1.96·std/√n).
 """
-function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0)
+function simulate(;
+        abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0,
+        alt_tax::Bool = true, alt_intensity_scale::Real = ALT_INTENSITY_SCALE,
+        nolump::Bool = true,
+    )
     split = [s.sector for s in abatement_sectors]
     shares = [s.renewable_share for s in abatement_sectors]
     rints = [s.renewable_intensity for s in abatement_sectors]
 
-    # Build a model at tax rate `tau`. With abatement we split the configured
-    # sectors; without, we leave every sector whole.
-    make_model(tau) =
+    # Build a model at tax rate `tau` with per-sector carbon intensities `cints`
+    # (defaults to the real `intensity`; the `alt_tax` run passes `intensity_alt`,
+    # the flat mean). `ctor` is the model constructor: `Bit.ModelCarbon` (lump-sum
+    # recycling, the default) for the base/carbon/alt legs, and
+    # `Bit.ModelCarbonNoLump` (revenue retained, not recycled) for the nolump leg —
+    # otherwise the two carbon variants are identical. With abatement we split the
+    # configured sectors; without, we leave every sector whole.
+    make_model(tau, cints = intensity; ctor = Bit.ModelCarbon) =
         abatement ?
-        Bit.ModelCarbon(
+        ctor(
             parameters, initial_conditions;
-            tau_carbon = tau, carbon_intensity_s = intensity,
+            tau_carbon = tau, carbon_intensity_s = cints,
             split_sector = split, renewable_share = shares, renewable_intensity = rints,
         ) :
-        Bit.ModelCarbon(
+        ctor(
             parameters, initial_conditions;
-            tau_carbon = tau, carbon_intensity_s = intensity,
+            tau_carbon = tau, carbon_intensity_s = cints,
         )
 
     # Baseline: the SAME structure but no tax, so the only difference versus the
@@ -554,7 +649,8 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     dep_base_sec = zeros(T, G, n_sims);   dep_carbon_sec = zeros(T, G, n_sims)
     unemp_base = zeros(T, n_sims);   unemp_carbon = zeros(T, n_sims)
     cpi_base = zeros(T, n_sims);     cpi_carbon = zeros(T, n_sims)  # household CPI = agg.P_bar_HH
-    lump_carbon = zeros(T, n_sims)
+    lump_carbon = zeros(T, n_sims)  # carbon dividend PER HOUSEHOLD (€/quarter)
+    tax_carbon = zeros(T, n_sims)   # TOTAL carbon tax paid = total lump-sum recycled (€/quarter)
     ren_share = [zeros(T, n_sims) for _ in split]  # renewable share of each split sector's output
     infl_base_v = Vector{Float64}[];    infl_carbon_v = Vector{Float64}[]
     totinfl_base_v = Vector{Float64}[]; totinfl_carbon_v = Vector{Float64}[]  # domestic total inflation (GDP deflator)
@@ -569,6 +665,30 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     gdp_base_P = zeros(T + 1, n_sims);      gdp_carbon_P = zeros(T + 1, n_sims)        # Paasche
     cons_base_v = Vector{Float64}[];    cons_carbon_v = Vector{Float64}[]
     yg_base = zeros(n_sims);         yg_carbon = zeros(n_sims)
+
+    # --- alt_tax run storage (flat-intensity robustness model; see `intensity_alt`).
+    # Mirrors the carbon run's MACRO series only (real GDP, consumption, unemployment,
+    # CPI, dividend, gov revenue) — the per-sector arrays are skipped because a uniform
+    # intensity makes per-sector emissions/abatement breakdowns meaningless. Only the
+    # Laspeyres common deflator is tracked (alt quantities ÷ the base run's prices), the
+    # same volume convention as `gdp_carbon_common`, so base/carbon/alt are comparable.
+    gdp_alt_v = Vector{Float64}[];      cons_alt_v = Vector{Float64}[]
+    gdp_alt_common = zeros(T + 1, n_sims)  # Laspeyres (base-run prices)
+    unemp_alt = zeros(T, n_sims);    cpi_alt = zeros(T, n_sims);    lump_alt = zeros(T, n_sims)
+    tax_alt = zeros(T, n_sims)  # TOTAL carbon tax paid = total lump-sum recycled (€/quarter), alt_tax run
+    yg_alt = zeros(n_sims)
+
+    # --- nolump run storage (ModelCarbonNoLump: the SAME carbon tax as the carbon
+    # run, but the revenue is RETAINED by the government rather than recycled to
+    # households as a lump-sum dividend). The base run has no tax (tau == 0), so it is
+    # identical under either model variant — we reuse `gdp_base`/`gdp_base_common` for
+    # the base-vs-nolump comparison and only need the nolump real-GDP series here:
+    # own-deflator (its native `real_gdp`) and the Laspeyres common deflator (nolump
+    # quantities ÷ the matching base run's prices), plus gov revenue `Y_G` to confirm
+    # the retained revenue lands on the government's books.
+    gdp_nolump_v = Vector{Float64}[]
+    gdp_nolump_common = zeros(T + 1, n_sims)  # Laspeyres (base-run prices)
+    yg_nolump = zeros(n_sims)
 
     for s in 1:n_sims
         # Progress indicator so a long Monte-Carlo run shows how far it has got.
@@ -628,6 +748,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
             unemp_carbon[t, s] = unemployment_rate(carbon)
             cpi_carbon[t, s] = carbon.agg.P_bar_HH
             lump_carbon[t, s] = carbon_dividend(carbon)
+            tax_carbon[t, s] = carbon_tax_paid(carbon)
             carbon_comps[t] = gdp_components(carbon)
             # Laspeyres: both runs ÷ the matching BASE run's prices (base_comps), so the
             # base-vs-carbon gap reflects volume only, valued at base-scenario prices.
@@ -647,6 +768,55 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
         push!(gdp_carbon_v, copy(carbon.data.real_gdp))
         push!(cons_carbon_v, copy(carbon.data.real_household_consumption))
         yg_carbon[s] = carbon.gov.Y_G
+
+        # --- alt_tax run: flat (uniform) carbon intensity ----------------------
+        # Same seed and the SAME shock as the carbon run, but every sector carries
+        # the output-weighted mean intensity scaled by `alt_intensity_scale`
+        # (`intensity_alt .* alt_intensity_scale`), so the tax is a uniform levy on
+        # output that recycles the SAME total dividend as the carbon run on average
+        # yet cannot reshuffle activity toward cleaner sectors — only the lump-sum
+        # dividend channel can move real GDP. Tracks the macro series only.
+        if alt_tax
+            Random.seed!(s)
+            alt = make_model(0.0, intensity_alt .* alt_intensity_scale)
+            gdp_alt_common[1, s] = alt.data.real_gdp[1]  # 2023Q4 init point (prices == 1)
+            for t in 1:T
+                Bit.step!(alt; parallel = true, shock! = shock!)
+                Bit.collect_data!(alt)
+                unemp_alt[t, s] = unemployment_rate(alt)
+                cpi_alt[t, s] = alt.agg.P_bar_HH
+                lump_alt[t, s] = carbon_dividend(alt)
+                tax_alt[t, s] = carbon_tax_paid(alt)
+                # Laspeyres: alt quantities ÷ the matching BASE run's prices, so
+                # base/carbon/alt are all valued at the same prices (volume only).
+                gdp_alt_common[t + 1, s] = real_gdp_common(gdp_components(alt), base_comps[t])
+            end
+            push!(gdp_alt_v, copy(alt.data.real_gdp))
+            push!(cons_alt_v, copy(alt.data.real_household_consumption))
+            yg_alt[s] = alt.gov.Y_G
+        end
+
+        # --- nolump run: carbon tax, revenue NOT recycled -----------------------
+        # Same seed, same real per-sector `intensity` and the SAME shock as the
+        # carbon run, but built with `Bit.ModelCarbonNoLump` so the collected revenue
+        # is retained by the government instead of being paid back as the lump-sum
+        # dividend. The only difference from the carbon run is the missing recycling,
+        # so base-vs-nolump isolates the tax WITHOUT the offsetting transfer. Tracks
+        # real GDP (own + Laspeyres common deflator) and gov revenue only.
+        if nolump
+            Random.seed!(s)
+            nl = make_model(0.0; ctor = Bit.ModelCarbonNoLump)
+            gdp_nolump_common[1, s] = nl.data.real_gdp[1]  # 2023Q4 init point (prices == 1)
+            for t in 1:T
+                Bit.step!(nl; parallel = true, shock! = shock!)
+                Bit.collect_data!(nl)
+                # Laspeyres: nolump quantities ÷ the matching BASE run's prices, so
+                # base/carbon/alt/nolump are all valued at the same prices (volume only).
+                gdp_nolump_common[t + 1, s] = real_gdp_common(gdp_components(nl), base_comps[t])
+            end
+            push!(gdp_nolump_v, copy(nl.data.real_gdp))
+            yg_nolump[s] = nl.gov.Y_G
+        end
     end
     println("\rRun $n_sims/$n_sims — done.")
 
@@ -656,6 +826,12 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     taxprod_base = reduce(hcat, taxprod_base_v); taxprod_carbon = reduce(hcat, taxprod_carbon_v)
     gdp_base = reduce(hcat, gdp_base_v);         gdp_carbon = reduce(hcat, gdp_carbon_v)
     cons_base = reduce(hcat, cons_base_v);       cons_carbon = reduce(hcat, cons_carbon_v)
+    # alt_tax series (empty when disabled → fall back to zero matrices of the same
+    # shape so the return tuple's fields are always present and well-shaped).
+    gdp_alt = alt_tax ? reduce(hcat, gdp_alt_v) : zeros(T + 1, n_sims)
+    cons_alt = alt_tax ? reduce(hcat, cons_alt_v) : zeros(T + 1, n_sims)
+    # nolump series (empty when disabled → zero matrix of the same shape).
+    gdp_nolump = nolump ? reduce(hcat, gdp_nolump_v) : zeros(T + 1, n_sims)
 
     # Fisher carbon-vs-base gap ratio = geometric mean of the Laspeyres and Paasche
     # gap ratios, taken at the RUN level (per seed, per quarter) BEFORE any cross-run
@@ -670,7 +846,7 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
     # Everything a `plot_*` / `table_*` needs, so callers can re-render without
     # re-simulating. Extra fields are harmless — destructure only what you use.
     return (;
-        abatement, n_sims, mode, split, sector_labels,
+        abatement, n_sims, mode, split, sector_labels, alt_tax,
         infl_base, infl_carbon,
         totinfl_base, totinfl_carbon,
         taxprod_base, taxprod_carbon,
@@ -687,12 +863,17 @@ function simulate(; abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual
         cpi_base, cpi_carbon,
         lump_carbon, ren_share,
         yg_base, yg_carbon,
+        tax_carbon,  # total carbon tax paid = total lump-sum recycled (€/quarter)
+        # alt_tax (flat-intensity) robustness run — see `intensity_alt`.
+        gdp_alt, gdp_alt_common, cons_alt, unemp_alt, cpi_alt, lump_alt, tax_alt, yg_alt,
+        # nolump run — carbon tax with the revenue retained, not recycled (ModelCarbonNoLump).
+        nolump, gdp_nolump, gdp_nolump_common, yg_nolump,
     )
 end
 
 """
     run_comparison(; abatement::Bool, n_sims::Int = 100, show_tables::Bool = false,
-                   carbon_efficiency_annual::Real = 0.0)
+                   carbon_efficiency_annual::Real = 0.0, alt_tax::Bool = true)
 
 Convenience wrapper around [`simulate`](@ref): run the model, assemble the combined
 plot, optionally print the tables, and return the plot (so `display(...)` works).
@@ -704,14 +885,25 @@ Pass `carbon_efficiency_annual > 0` to enable the optional carbon-efficiency tre
 (see [`simulate`](@ref)) — a robustness check that bends the base-case emissions
 path down toward the observed Dutch decline. Defaults to `0.0` (off).
 
+`alt_tax` (default `true`) adds the flat-intensity robustness leg (see
+[`simulate`](@ref)); its real-GDP and tax-paid tables print in the `show_tables`
+block. Set `alt_tax = false` to skip it. `alt_intensity_scale` tunes the alt run's
+flat intensity so its tax matches the carbon run's on average (see [`simulate`](@ref)).
+
+`nolump` (default `true`) adds the no-recycling leg (carbon tax with the revenue
+retained, not handed back as a lump-sum dividend; see [`simulate`](@ref)); its
+base-vs-nolump real-GDP tables print in the `show_tables` block. Set `nolump = false`
+to skip it.
+
 To explore different graphs/tables WITHOUT re-running the model, call `simulate`
 yourself once and reuse its returned data — see the `simulate` docstring.
 """
 function run_comparison(;
         abatement::Bool, n_sims::Int = 100, show_tables::Bool = false,
-        carbon_efficiency_annual::Real = 0.0,
+        carbon_efficiency_annual::Real = 0.0, alt_tax::Bool = true,
+        alt_intensity_scale::Real = ALT_INTENSITY_SCALE, nolump::Bool = true,
     )
-    data = simulate(; abatement, n_sims, carbon_efficiency_annual)
+    data = simulate(; abatement, n_sims, carbon_efficiency_annual, alt_tax, alt_intensity_scale, nolump)
     (;
         infl_base, infl_carbon, totinfl_base, totinfl_carbon, taxprod_base, taxprod_carbon,
         emis_base, emis_carbon, emis_base_sec,
@@ -720,8 +912,10 @@ function run_comparison(;
         gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common,
         gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
         cons_base, cons_carbon,
-        unemp_base, unemp_carbon, cpi_base, cpi_carbon, lump_carbon, ren_share,
+        unemp_base, unemp_carbon, cpi_base, cpi_carbon, lump_carbon, tax_carbon, ren_share,
         split, mode, yg_base, yg_carbon,
+        gdp_alt, lump_alt, tax_alt, yg_alt,  # gdp_alt_common/cons_alt/unemp_alt/cpi_alt also in `data`
+        gdp_nolump, gdp_nolump_common, yg_nolump,  # nolump (no-recycling) run
     ) = data
 
     # --- Graphs ----------------------------------------------------------------
@@ -746,6 +940,13 @@ function run_comparison(;
 
         # plot_real_gdp(gdp_base, gdp_carbon),  # own-deflator real GDP
         # plot_real_gdp(gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common; common_deflator = true),  # common (baseline) deflator
+        # plot_real_gdp_base_vs_alt(gdp_base, gdp_alt),  # real GDP: base vs alt_tax (own deflator)
+        # plot_real_gdp_diff_base_vs_alt(gdp_base, gdp_alt),  # alt_tax real GDP as % vs base
+        # plot_real_gdp_base_vs_nolump(gdp_base, gdp_nolump),  # real GDP: base vs nolump (revenue NOT recycled)
+        # plot_real_gdp_base_vs_nolump(gdp_base, gdp_nolump, gdp_base_common, gdp_nolump_common; common_deflator = true),  # common deflator
+        # plot_real_gdp_diff_base_vs_nolump(gdp_base, gdp_nolump),  # nolump real GDP as % vs base
+        # plot_carbon_tax_paid(tax_carbon, tax_alt),  # carbon tax paid / lump-sum recycled: carbon vs alt_tax
+        # plot_carbon_tax_paid_diff(tax_carbon, tax_alt),  # tax paid: alt_tax as % vs carbon (0% = matched)
         # plot_real_gdp_diff(gdp_base, gdp_carbon),  # real GDP as % vs base
         # plot_consumption(cons_base, cons_carbon),  # real consumer spending: base vs carbon
         # plot_consumption_diff(cons_base, cons_carbon),  # real consumer spending as % vs base
@@ -768,8 +969,10 @@ function run_comparison(;
     
 
     println("--- $mode ($n_sims runs) ---")
-    println("base   mean gov.Y_G: ", mean(yg_base))
-    println("carbon mean gov.Y_G: ", mean(yg_carbon))
+    println("base    mean gov.Y_G: ", mean(yg_base))
+    println("carbon  mean gov.Y_G: ", mean(yg_carbon))
+    alt_tax && println("alt_tax mean gov.Y_G: ", mean(yg_alt))
+    nolump && println("nolump  mean gov.Y_G: ", mean(yg_nolump))
     if abatement
         for (k, s) in enumerate(split)
             mr, _ = confidence_band(ren_share[k])
@@ -808,6 +1011,21 @@ function run_comparison(;
         table_deposits_polluters_base(dep_base_sec, emis_base_sec, sector_labels)  # base firm deposits (€): polluters vs rest
         table_real_gdp(gdp_base, gdp_carbon)  # own-deflator real GDP
         table_real_gdp(gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common; common_deflator = true)  # common (baseline) deflator
+        # alt_tax (flat-intensity) robustness check: is the carbon run's real-GDP
+        # uplift driven by the lump-sum dividend rather than sectoral reallocation?
+        if alt_tax
+            table_real_gdp_base_vs_alt(gdp_base, gdp_alt)  # real GDP levels: base vs alt_tax (own deflator)
+            table_real_gdp_diff_base_vs_alt(gdp_base, gdp_alt)  # alt_tax real GDP as % vs base (own deflator)
+            table_carbon_tax_paid(tax_carbon, tax_alt, lump_carbon, lump_alt)  # tax paid + lump-sum: carbon vs alt_tax
+            table_carbon_tax_paid_diff(tax_carbon, tax_alt)  # tax paid: alt_tax as % vs carbon (0% = matched)
+        end
+        # nolump (no-recycling) check: how much of the carbon run's real-GDP outcome
+        # was the lump-sum dividend? base vs nolump real GDP (revenue retained, not recycled).
+        if nolump
+            table_real_gdp_base_vs_nolump(gdp_base, gdp_nolump)  # real GDP levels: base vs nolump (own deflator)
+            table_real_gdp_base_vs_nolump(gdp_base, gdp_nolump, gdp_base_common, gdp_nolump_common; common_deflator = true)  # common (baseline) deflator
+            table_real_gdp_diff_base_vs_nolump(gdp_base, gdp_nolump)  # nolump real GDP as % vs base (own deflator)
+        end
         table_real_gdp_diff(gdp_base, gdp_carbon)  # real GDP as % vs base
         # Carbon-vs-base gap under own / Laspeyres / Paasche / Fisher deflators, side by side.
         table_real_gdp_index_compare(
