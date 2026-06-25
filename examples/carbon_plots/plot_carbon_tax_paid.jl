@@ -41,10 +41,10 @@ end
 
 # alt_tax carbon tax paid as a % difference from the carbon run, quarter by quarter.
 # 0% ⇒ the two runs pay (and recycle) exactly the same — the target when matching
-# `intensity_alt`. Per-run paired ratio alt/carbon − 1 (same seed), then cross-run
-# mean ± 95% CI.
+# `intensity_alt`. Paired difference per run scaled by the mean carbon level (shared
+# `pct_diff_vs` — ratio-of-means), then cross-run mean ± 95% CI.
 function plot_carbon_tax_paid_diff(tax_carbon, tax_alt)
-    d = 100 .* (tax_alt ./ tax_carbon .- 1)
+    d = pct_diff_vs(tax_alt, tax_carbon)
     T = size(d, 1)
     m, s = confidence_band(d)
     p = plot(
@@ -60,5 +60,5 @@ end
 table_carbon_tax_paid_diff(tax_carbon, tax_alt) =
     mean_table(
         "carbon tax paid Δ: alt_tax vs carbon (% vs carbon)",
-        "alt_tax vs carbon" => 100 .* (tax_alt ./ tax_carbon .- 1),
+        "alt_tax vs carbon" => pct_diff_vs(tax_alt, tax_carbon),
     )

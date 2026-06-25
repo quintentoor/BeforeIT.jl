@@ -16,10 +16,15 @@ function plot_unemployment(unemp_base, unemp_carbon)
     return p
 end
 
-# Same data as a mean-vs-time table (base vs carbon), expressed as a percentage.
+# Same data as a mean-vs-time table (base vs carbon), expressed as a percentage, plus
+# a two-sided paired p-value column (carbon ≠ base): as with real GDP there is no a
+# priori sign for the unemployment effect, so the two-sided test is the appropriate
+# one. The paired test is scale-invariant, so it is computed on the unscaled shares;
+# "—" marks quarters where the two runs are identical (no variation, test undefined).
 table_unemployment(unemp_base, unemp_carbon) =
     mean_table(
         "unemployment rate per quarter (%)",
         "base (no tax)" => 100 .* unemp_base,
-        "carbon" => 100 .* unemp_carbon,
+        "carbon" => 100 .* unemp_carbon;
+        extra = ["p (2-sided)" => paired_pvalue(unemp_base, unemp_carbon; tail = :two)],
     )

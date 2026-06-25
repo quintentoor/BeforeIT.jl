@@ -44,3 +44,17 @@ function plot_gdp_growth_quarterly_sourced(gdp_base)
     plot!(p, 1:n, GDP_GROWTH_SOURCED[1:n]; label = "Sourced data", marker = :circle, markersize = 3)
     return p
 end
+
+# Same data as a mean-vs-time table: sourced vs modelled QoQ growth side by side,
+# with the RMSE between the model's cross-run mean and the sourced path in the title.
+function table_gdp_growth_quarterly_sourced(gdp_base)
+    T = size(gdp_base, 1) - 1
+    n = min(T, length(GDP_GROWTH_SOURCED))
+    model = gdp_growth_quarterly(gdp_base)
+    r = rmse_vs_sourced(model, GDP_GROWTH_SOURCED)
+    return mean_table(
+        "real GDP growth per quarter (%) — RMSE vs sourced = $(round(r, digits = 3))",
+        "Sourced data" => reshape(GDP_GROWTH_SOURCED[1:n], :, 1),
+        "base (no tax)" => model,
+    )
+end

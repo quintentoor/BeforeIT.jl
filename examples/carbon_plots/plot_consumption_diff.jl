@@ -6,12 +6,12 @@
 # `cons_base`/`cons_carbon` are the built-in `real_household_consumption` series
 # (T+1 × n_sims): row 1 is the 2023Q4 initial condition, so we drop it to start at
 # the first simulated quarter (2024Q1, `start_q0 = 0`), matching the other graphs.
-# Base and carbon within a repetition share the same RNG seed, so the per-run ratio
-# `carbon/base − 1` isolates the tax effect cleanly; we take that paired difference
-# per run, then show the cross-run mean ± 95% CI ribbon (the same band style as the
-# other panels).
+# Base and carbon within a repetition share the same RNG seed, so the paired
+# difference isolates the tax effect cleanly. We report the paired ABSOLUTE difference
+# per run divided by the cross-run mean base level (the shared `pct_diff_vs`
+# convention — ratio-of-means), then show the cross-run mean ± 95% CI ribbon.
 consumption_pct_diff(cons_base, cons_carbon) =
-    100 .* (cons_carbon[2:end, :] ./ cons_base[2:end, :] .- 1)
+    pct_diff_vs(cons_carbon[2:end, :], cons_base[2:end, :])
 
 function plot_consumption_diff(cons_base, cons_carbon)
     d = consumption_pct_diff(cons_base, cons_carbon)

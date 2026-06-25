@@ -67,7 +67,7 @@ function table_real_gdp_diff_alt(gdp_base, gdp_carbon, gdp_alt,
         gdp_base, gdp_carbon, gdp_alt,
         gdp_base_common, gdp_carbon_common, gdp_alt_common, common_deflator,
     )
-    pct(num, den) = 100 .* (num[2:end, :] ./ den[2:end, :] .- 1)
+    pct(num, den) = pct_diff_vs(num[2:end, :], den[2:end, :])
     suffix = common_deflator ? " (common deflator)" : ""
     return mean_table(
         "real GDP Δ vs base — carbon vs alt_tax" * suffix * " (% vs base)",
@@ -125,13 +125,13 @@ function table_real_gdp_base_vs_alt(gdp_base, gdp_alt,
 end
 
 # alt_tax real GDP as a % difference from base, quarter by quarter. Positive ⇒ the
-# uniform-tax (lump-sum-only) run's real GDP is ABOVE base. Per-run paired ratio
-# alt/base − 1 (same seed), then cross-run mean ± 95% CI — the same convention as
-# `plot_real_gdp_diff`.
+# uniform-tax (lump-sum-only) run's real GDP is ABOVE base. Paired difference per run
+# scaled by the mean base level (shared `pct_diff_vs` — ratio-of-means), then cross-run
+# mean ± 95% CI — the same convention as `plot_real_gdp_diff`.
 function plot_real_gdp_diff_base_vs_alt(gdp_base, gdp_alt,
         gdp_base_common = gdp_base, gdp_alt_common = gdp_alt; common_deflator = false)
     b, a = common_deflator ? (gdp_base_common, gdp_alt_common) : (gdp_base, gdp_alt)
-    d = 100 .* (a[2:end, :] ./ b[2:end, :] .- 1)
+    d = pct_diff_vs(a[2:end, :], b[2:end, :])
     T = size(d, 1)
     m, s = confidence_band(d)
     suffix = common_deflator ? " (common deflator)" : ""
@@ -151,6 +151,6 @@ function table_real_gdp_diff_base_vs_alt(gdp_base, gdp_alt,
     suffix = common_deflator ? " (common deflator)" : ""
     return mean_table(
         "real GDP Δ vs base — alt_tax" * suffix * " (% vs base)",
-        "alt_tax vs base" => 100 .* (a[2:end, :] ./ b[2:end, :] .- 1),
+        "alt_tax vs base" => pct_diff_vs(a[2:end, :], b[2:end, :]),
     )
 end

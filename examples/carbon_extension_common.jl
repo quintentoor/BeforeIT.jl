@@ -18,6 +18,23 @@ And then whichever graphs you want
 
 For example: table_gdp_growth_quarterly(sim.gdp_base)
 (make sure to put sim. in front)
+
+Save sim:
+save_sim(sim, "simname") 
+
+Load sim:
+sim = load_sim("simname")
+
+
+All saves:
+"sim_1000_reg" - regular simulation with 1000 runs
+"sigma_0_1000" - sigma=0.0 simulation with 1000 runs
+"sim_eff_param_05_1000" - efficiency parameter of 0.05 with 1000 runs
+"sim_kappa_0_1000" - kappa changed to 0.0 with 1000 runs
+"sim_kappa_025_1000" - kappa changed to 0.25 with 1000 runs
+"sim_kappa_075_1000" - kappa changed to 0.75 with 1000 runs
+"sim_kappa_1_1000" - kappa changed to 1.0 with 1000 runs
+
 =#
 import BeforeIT as Bit
 using Plots, JLD2, Random, Statistics
@@ -40,8 +57,10 @@ include(joinpath(CARBON_PLOT_DIR, "plot_employment_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_profit_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_deposits_polluters.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_nominal_gdp.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_alt.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_nolump.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_carbon_vs_nolump.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_carbon_tax_paid.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_real_gdp_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_consumption.jl"))
@@ -55,6 +74,7 @@ include(joinpath(CARBON_PLOT_DIR, "plot_cpi_diff.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_renewable_share.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_quarterly.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_quarterly_sourced.jl"))
+include(joinpath(CARBON_PLOT_DIR, "plot_gdp_growth_cumulative_sourced.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_unemployment_quarterly.jl"))
 include(joinpath(CARBON_PLOT_DIR, "plot_unemployment_quarterly_sourced.jl"))
 
@@ -96,6 +116,7 @@ parameters["kappa_cp"] = kappa_cp
 
 # Carbon intensities (tCO2 / € of gross output), NL 2015, BeforeIT 62-sector ordering
 # Source: Eurostat env_ac_ainah_r2 (CO2 emissions) / nama_10_a64 (gross output), base year 2015
+#=
 intensity = [
     0.000413,   #  1  A01     Crop and animal production
     0.000311,   #  2  A02     Forestry and logging
@@ -159,6 +180,75 @@ intensity = [
     0.000044,   # 60  S94     Membership organisations
     0.000031,   # 61  S95     Repair of computers/household goods
     0.000024,   # 62  S96     Other personal services
+]
+=#
+
+# New intensities:
+ # Carbon intensities (tCO2 / € of gross output), NL 2023, BeforeIT 62-sector ordering
+# Source: Eurostat env_ac_ainah_r2 (CO2 emissions) / nama_10_a64 output (P1), year 2023
+intensity = [
+    0.00016386,   #  1  A01     Crop and animal production
+    0.00015180,   #  2  A02     Forestry and logging
+    0.00067320,   #  3  A03     Fishing and aquaculture
+    0.00010838,   #  4  B       Mining and quarrying
+    0.00003239,   #  5  C10-C12 Food, beverages, tobacco
+    0.00003530,   #  6  C13-C15 Textiles, apparel, leather
+    0.00001329,   #  7  C16     Wood
+    0.00004092,   #  8  C17     Paper
+    0.00001557,   #  9  C18     Printing
+    0.00023456,   # 10  C19     Coke and refined petroleum
+    0.00025554,   # 11  C20     Chemicals
+    0.00000554,   # 12  C21     Pharmaceuticals
+    0.00002197,   # 13  C22     Rubber and plastics
+    0.00014893,   # 14  C23     Non-metallic minerals
+    0.00047457,   # 15  C24     Basic metals
+    0.00001712,   # 16  C25     Fabricated metals
+    0.00000248,   # 17  C26     Computer/electronic/optical
+    0.00000799,   # 18  C27     Electrical equipment
+    0.00000480,   # 19  C28     Machinery
+    0.00000790,   # 20  C29     Motor vehicles
+    0.00000732,   # 21  C30     Other transport equipment
+    0.00002135,   # 22  C31_C32 Furniture/other manufacturing
+    0.00001363,   # 23  C33     Repair and installation
+    0.00058930,   # 24  D       Electricity, gas, steam
+    0.00000951,   # 25  E36     Water
+    0.00021213,   # 26  E37-E39 Sewerage, waste
+    0.00002126,   # 27  F       Construction
+    0.00001352,   # 28  G45     Motor vehicle trade
+    0.00001302,   # 29  G46     Wholesale
+    0.00001650,   # 30  G47     Retail
+    0.00013457,   # 31  H49     Land transport
+    0.00075751,   # 32  H50     Water transport
+    0.00072249,   # 33  H51     Air transport
+    0.00001524,   # 34  H52     Warehousing
+    0.00001425,   # 35  H53     Postal/courier
+    0.00002029,   # 36  I       Accommodation and food service
+    0.00000172,   # 37  J58     Publishing
+    0.00000150,   # 38  J59_J60 Film/broadcasting
+    0.00000256,   # 39  J61     Telecommunications
+    0.00000099,   # 40  J62_J63 Computer programming/IT
+    0.00000372,   # 41  K64     Financial services
+    0.00000299,   # 42  K65     Insurance/pension
+    0.00000295,   # 43  K66     Auxiliary financial
+    0.00000192,   # 44  L       Real estate (excl. imputed)
+    0.00000252,   # 45  M69_M70 Legal/accounting/consultancy
+    0.00000387,   # 46  M71     Architecture/engineering
+    0.00000538,   # 47  M72     Scientific R&D
+    0.00000914,   # 48  M73     Advertising/market research
+    0.00000933,   # 49  M74_M75 Other professional
+    0.00001659,   # 50  N77     Rental and leasing
+    0.00002022,   # 51  N78     Employment activities
+    0.00002027,   # 52  N79     Travel agency
+    0.00002141,   # 53  N80-N82 Security/services to buildings
+    0.00000792,   # 54  O       Public administration
+    0.00000788,   # 55  P       Education
+    0.00000734,   # 56  Q86     Human health
+    0.00001103,   # 57  Q87_Q88 Social work
+    0.00001404,   # 58  R90-R92 Creative/arts/cultural
+    0.00002254,   # 59  R93     Sports/recreation
+    0.00002047,   # 60  S94     Membership organisations
+    0.00001308,   # 61  S95     Repair of computers/household goods
+    0.00001574,   # 62  S96     Other personal services
 ]
 @assert length(intensity) == 62
 
@@ -619,7 +709,7 @@ the band across runs shows estimation uncertainty. Each `plot_*` shows the cross
 mean as a line with a 95% confidence-interval ribbon (mean ± 1.96·std/√n).
 """
 function simulate(;
-        abatement::Bool, n_sims::Int = 100, carbon_efficiency_annual::Real = 0.0,
+        abatement::Bool, n_sims::Int = 1000, carbon_efficiency_annual::Real = 0.0,
         alt_tax::Bool = true, alt_intensity_scale::Real = ALT_INTENSITY_SCALE,
         nolump::Bool = true,
     )
@@ -709,6 +799,10 @@ function simulate(;
     totinfl_base_v = Vector{Float64}[]; totinfl_carbon_v = Vector{Float64}[]  # domestic total inflation (GDP deflator)
     taxprod_base_v = Vector{Float64}[]; taxprod_carbon_v = Vector{Float64}[]
     gdp_base_v = Vector{Float64}[];     gdp_carbon_v = Vector{Float64}[]
+    # Nominal (current-price) GDP — `model.data.nominal_gdp`, the undeflated GDP each
+    # run reports. Tracked alongside real GDP so the price (deflator) component of the
+    # carbon tax shows up: nominal − real isolates how much of the gap is prices.
+    nomgdp_base_v = Vector{Float64}[];  nomgdp_carbon_v = Vector{Float64}[]
     # Common-deflator real GDP under two index conventions (both shaped (T+1 × n_sims)
     # to mirror gdp_base/gdp_carbon; row 1 = the 2023Q4 initial point real_gdp carries):
     #  * Laspeyres — both runs re-deflated by the matching (same-seed) BASE run's prices.
@@ -774,6 +868,7 @@ function simulate(;
         push!(totinfl_base_v, total_inflation(base))
         push!(taxprod_base_v, copy(base.data.taxes_production))
         push!(gdp_base_v, copy(base.data.real_gdp))
+        push!(nomgdp_base_v, copy(base.data.nominal_gdp))
         push!(cons_base_v, copy(base.data.real_household_consumption))
         yg_base[s] = base.gov.Y_G
 
@@ -819,6 +914,7 @@ function simulate(;
         push!(totinfl_carbon_v, total_inflation(carbon))
         push!(taxprod_carbon_v, copy(carbon.data.taxes_production))
         push!(gdp_carbon_v, copy(carbon.data.real_gdp))
+        push!(nomgdp_carbon_v, copy(carbon.data.nominal_gdp))
         push!(cons_carbon_v, copy(carbon.data.real_household_consumption))
         yg_carbon[s] = carbon.gov.Y_G
 
@@ -878,6 +974,7 @@ function simulate(;
     totinfl_base = reduce(hcat, totinfl_base_v); totinfl_carbon = reduce(hcat, totinfl_carbon_v)
     taxprod_base = reduce(hcat, taxprod_base_v); taxprod_carbon = reduce(hcat, taxprod_carbon_v)
     gdp_base = reduce(hcat, gdp_base_v);         gdp_carbon = reduce(hcat, gdp_carbon_v)
+    nomgdp_base = reduce(hcat, nomgdp_base_v);   nomgdp_carbon = reduce(hcat, nomgdp_carbon_v)
     cons_base = reduce(hcat, cons_base_v);       cons_carbon = reduce(hcat, cons_carbon_v)
     # alt_tax series (empty when disabled → fall back to zero matrices of the same
     # shape so the return tuple's fields are always present and well-shaped).
@@ -909,6 +1006,7 @@ function simulate(;
         prof_base_sec, prof_carbon_sec,
         dep_base_sec, dep_carbon_sec,
         gdp_base, gdp_carbon,
+        nomgdp_base, nomgdp_carbon,
         gdp_base_common, gdp_carbon_common,
         gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
         cons_base, cons_carbon,
@@ -922,6 +1020,46 @@ function simulate(;
         # nolump run — carbon tax with the revenue retained, not recycled (ModelCarbonNoLump).
         nolump, gdp_nolump, gdp_nolump_common, yg_nolump,
     )
+end
+
+# --- Persisting a run -----------------------------------------------------------
+# `simulate` is the expensive step. Save its returned NamedTuple to disk once, then
+# reload it in a fresh session (after `include`ing this file, which is cheap — it
+# only defines the functions) to re-render any `plot_*` / `table_*` without
+# re-running the model. The output tuple is plain Arrays, so it serialises cleanly.
+# Files land in `carbon_plots/` and are gitignored (see .gitignore: examples/carbon_plots/*.jld2).
+
+"""
+    save_sim(sim, name; dir = CARBON_PLOT_DIR) -> String
+
+Save a `simulate(...)` result to `<dir>/<name>.jld2` so you don't have to re-run the
+model. `name` may include or omit the `.jld2` suffix. Returns the path written.
+
+    sim = simulate(; abatement = false)
+    save_sim(sim, "sim_noab")          # → examples/carbon_plots/sim_noab.jld2
+
+Reload it later with [`load_sim`](@ref).
+"""
+function save_sim(sim, name; dir = CARBON_PLOT_DIR)
+    path = joinpath(dir, endswith(name, ".jld2") ? name : name * ".jld2")
+    jldsave(path; sim)
+    println("saved → ", path)
+    return path
+end
+
+"""
+    load_sim(name; dir = CARBON_PLOT_DIR) -> NamedTuple
+
+Load a result saved by [`save_sim`](@ref) back into the same NamedTuple `simulate`
+returns, so you can feed its fields to the `plot_*` / `table_*` functions WITHOUT
+re-simulating. `name` may include or omit the `.jld2` suffix.
+
+    sim = load_sim("sim_noab")
+    display(plot_real_gdp_carbon_vs_nolump(sim.gdp_carbon, sim.gdp_nolump))
+"""
+function load_sim(name; dir = CARBON_PLOT_DIR)
+    path = joinpath(dir, endswith(name, ".jld2") ? name : name * ".jld2")
+    return load(path, "sim")
 end
 
 """
@@ -962,7 +1100,7 @@ function run_comparison(;
         emis_base, emis_carbon, emis_base_sec,
         prod_base_sec, prod_carbon_sec, price_base_sec, price_carbon_sec,
         emp_carbon_sec, prof_carbon_sec, dep_base_sec, dep_carbon_sec,
-        gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common,
+        gdp_base, gdp_carbon, nomgdp_base, nomgdp_carbon, gdp_base_common, gdp_carbon_common,
         gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
         cons_base, cons_carbon,
         unemp_base, unemp_carbon, cpi_base, cpi_carbon, lump_carbon, tax_carbon, ren_share,
@@ -992,12 +1130,16 @@ function run_comparison(;
         # plot_deposits_polluters_base(dep_base_sec, emis_base_sec),  # base firm deposits (€): top-8 polluters vs rest
 
         # plot_real_gdp(gdp_base, gdp_carbon),  # own-deflator real GDP
+        # plot_nominal_gdp(nomgdp_base, nomgdp_carbon),  # nominal (current-price) GDP: base vs carbon
         # plot_real_gdp(gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common; common_deflator = true),  # common (baseline) deflator
         # plot_real_gdp_base_vs_alt(gdp_base, gdp_alt),  # real GDP: base vs alt_tax (own deflator)
         # plot_real_gdp_diff_base_vs_alt(gdp_base, gdp_alt),  # alt_tax real GDP as % vs base
         # plot_real_gdp_base_vs_nolump(gdp_base, gdp_nolump),  # real GDP: base vs nolump (revenue NOT recycled)
         # plot_real_gdp_base_vs_nolump(gdp_base, gdp_nolump, gdp_base_common, gdp_nolump_common; common_deflator = true),  # common deflator
         # plot_real_gdp_diff_base_vs_nolump(gdp_base, gdp_nolump),  # nolump real GDP as % vs base
+        # plot_real_gdp_carbon_vs_nolump(gdp_carbon, gdp_nolump),  # real GDP: carbon (lump) vs nolump — isolates the dividend
+        # plot_real_gdp_carbon_vs_nolump(gdp_carbon, gdp_nolump, gdp_carbon_common, gdp_nolump_common; common_deflator = true),  # common deflator
+        # plot_real_gdp_diff_carbon_vs_nolump(gdp_carbon, gdp_nolump),  # nolump real GDP as % vs carbon (lump)
         # plot_carbon_tax_paid(tax_carbon, tax_alt),  # carbon tax paid / lump-sum recycled: carbon vs alt_tax
         # plot_carbon_tax_paid_diff(tax_carbon, tax_alt),  # tax paid: alt_tax as % vs carbon (0% = matched)
         # plot_real_gdp_diff(gdp_base, gdp_carbon),  # real GDP as % vs base
@@ -1010,6 +1152,7 @@ function run_comparison(;
         # plot_carbon_dividend(lump_carbon),
         # plot_dividend_vs_consumption(lump_carbon, cons_base, cons_carbon),  # rebate (€) vs real-consumption uplift (%)
         # plot_gdp_growth_quarterly_sourced(gdp_base),  # base case + overlaid "Sourced data" line
+        # plot_gdp_growth_cumulative_sourced(gdp_base),  # cumulative (compounded) base growth + sourced
         # plot_gdp_growth_quarterly(gdp_base),       # base case only
         # plot_unemployment_quarterly(unemp_base),   # base case only
         # plot_unemployment_quarterly_sourced(unemp_base),  # base case + overlaid "Sourced data" line
@@ -1063,6 +1206,7 @@ function run_comparison(;
         table_deposits_polluters(dep_carbon_sec, emis_base_sec, sector_labels)     # carbon firm deposits (€): polluters vs rest
         table_deposits_polluters_base(dep_base_sec, emis_base_sec, sector_labels)  # base firm deposits (€): polluters vs rest
         table_real_gdp(gdp_base, gdp_carbon)  # own-deflator real GDP
+        table_nominal_gdp(nomgdp_base, nomgdp_carbon)  # nominal (current-price) GDP
         table_real_gdp(gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common; common_deflator = true)  # common (baseline) deflator
         # alt_tax (flat-intensity) robustness check: is the carbon run's real-GDP
         # uplift driven by the lump-sum dividend rather than sectoral reallocation?
@@ -1078,10 +1222,19 @@ function run_comparison(;
             table_real_gdp_base_vs_nolump(gdp_base, gdp_nolump)  # real GDP levels: base vs nolump (own deflator)
             table_real_gdp_base_vs_nolump(gdp_base, gdp_nolump, gdp_base_common, gdp_nolump_common; common_deflator = true)  # common (baseline) deflator
             table_real_gdp_diff_base_vs_nolump(gdp_base, gdp_nolump)  # nolump real GDP as % vs base (own deflator)
+            # carbon (lump) vs nolump — nets out the tax, isolates the lump-sum dividend.
+            table_real_gdp_carbon_vs_nolump(gdp_carbon, gdp_nolump)  # real GDP levels: carbon vs nolump (own deflator)
+            table_real_gdp_diff_carbon_vs_nolump(gdp_carbon, gdp_nolump)  # nolump real GDP as % vs carbon (own deflator)
         end
         table_real_gdp_diff(gdp_base, gdp_carbon)  # real GDP as % vs base
         # Carbon-vs-base gap under own / Laspeyres / Paasche / Fisher deflators, side by side.
         table_real_gdp_index_compare(
+            gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common,
+            gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
+        )
+        # Same four conventions, but per-quarter paired p-values (carbon ≠ base) instead
+        # of the gap %, so you can see whether each gap is statistically significant.
+        table_real_gdp_index_compare_pvalues(
             gdp_base, gdp_carbon, gdp_base_common, gdp_carbon_common,
             gdp_base_P, gdp_carbon_P, gdp_fisher_ratio,
         )
@@ -1094,7 +1247,10 @@ function run_comparison(;
         table_carbon_dividend(lump_carbon)
         table_dividend_vs_consumption(lump_carbon, cons_base, cons_carbon)  # rebate (€) vs real-consumption uplift (%)
         # table_gdp_growth_quarterly(gdp_base)        # base case only
+        # table_gdp_growth_quarterly_sourced(gdp_base)   # QoQ: sourced vs model (+ RMSE)
+        # table_gdp_growth_cumulative_sourced(gdp_base)  # cumulative (compounded): sourced vs model (+ RMSE)
         # table_unemployment_quarterly(unemp_base)    # base case only
+        # table_unemployment_quarterly_sourced(unemp_base)  # unemployment: sourced vs model (+ RMSE)
         abatement && table_renewable_share(ren_share, split)
     end
 

@@ -13,6 +13,11 @@
 !2010.jld2
 *.h5
 
+# Saved simulate(...) outputs from the carbon extension (save_sim/load_sim in
+# examples/carbon_extension_common.jl) — large Monte-Carlo result tuples, regenerable.
+# (Already covered by *.jld2 above; listed explicitly to document intent.)
+examples/carbon_plots/*.jld2
+
 # Some pdfs
 autodiff_performance.pdf
 benchmark_w_matlab.pdf

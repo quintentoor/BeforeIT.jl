@@ -7,10 +7,11 @@
 # the 2023Q4 initial condition, so we drop it to start at the first simulated quarter
 # (2024Q1, `start_q0 = 0`), matching the other graphs. Base and carbon within a
 # repetition share the same RNG seed, so the per-run ratio `carbon/base − 1` isolates
-# the tax effect cleanly; we take that paired difference per run, then show the
-# cross-run mean ± 95% CI ribbon (the same band style as the other panels).
+# the tax effect cleanly. We report the paired ABSOLUTE difference per run divided by
+# the cross-run mean base level (the shared `pct_diff_vs` convention — ratio-of-means,
+# matching `run_comparison`), then show the cross-run mean ± 95% CI ribbon.
 real_gdp_pct_diff(gdp_base, gdp_carbon) =
-    100 .* (gdp_carbon[2:end, :] ./ gdp_base[2:end, :] .- 1)
+    pct_diff_vs(gdp_carbon[2:end, :], gdp_base[2:end, :])
 
 function plot_real_gdp_diff(gdp_base, gdp_carbon)
     d = real_gdp_pct_diff(gdp_base, gdp_carbon)

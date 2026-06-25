@@ -45,3 +45,18 @@ function plot_unemployment_quarterly_sourced(unemp_base)
     plot!(p, 1:n, UNEMPLOYMENT_SOURCED[1:n]; label = "Sourced data", marker = :circle, markersize = 3)
     return p
 end
+
+# Same data as a mean-vs-time table: sourced vs modelled unemployment rate (%) side
+# by side, with the RMSE between the model's cross-run mean and the sourced path in
+# the title.
+function table_unemployment_quarterly_sourced(unemp_base)
+    T = size(unemp_base, 1)
+    n = min(T, length(UNEMPLOYMENT_SOURCED))
+    model = 100 .* unemp_base
+    r = rmse_vs_sourced(model, UNEMPLOYMENT_SOURCED)
+    return mean_table(
+        "unemployment rate per quarter (%) — RMSE vs sourced = $(round(r, digits = 3))",
+        "Sourced data" => reshape(UNEMPLOYMENT_SOURCED[1:n], :, 1),
+        "base (no tax)" => model,
+    )
+end

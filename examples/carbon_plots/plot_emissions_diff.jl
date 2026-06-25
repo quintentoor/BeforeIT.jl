@@ -4,12 +4,22 @@
 # 0% means no difference.
 #
 # `emis_base`/`emis_carbon` are (T × n_sims), one row per simulated quarter
-# (2024Q1..2028Q4). Base and carbon within a repetition share the same RNG seed, so
-# the per-run ratio `carbon/base − 1` isolates the tax effect cleanly; we take that
-# paired difference per run, then show the cross-run mean ± 95% CI ribbon (the same
-# band style as the other panels). This matches the single "emissions Δ vs base"
-# number printed by `run_comparison`, but resolved over the whole path.
-emissions_pct_diff(emis_base, emis_carbon) = 100 .* (emis_carbon ./ emis_base .- 1)
+# (2024Q1..2028Q4). Base and carbon within a repetition share the same RNG seed.
+#
+# We report the PAIRED ABSOLUTE difference (carbon − base) per run, then divide the
+# cross-run mean AND its CI by the cross-run mean base level at that quarter:
+#     100 · mean_s(carbon_s − base_s) / mean_s(base_s).
+# This is deliberately NOT the mean of the per-run ratios `carbon/base − 1`. Over a
+# long horizon the same-seed pairing decorrelates (the tax pushes the carbon economy
+# onto a different path), so by the final quarters corr(base, carbon) across runs is
+# small. Dividing run-by-run then injects large division noise AND biases the centre
+# (E[c/b] ≠ E[c]/E[b] when b is noisy), so the ratio version reads as far less precise
+# than it really is and its mean drifts away from the headline figure. Dividing the
+# paired difference by a SINGLE (mean) denominator avoids both problems: the centre is
+# exactly the ratio-of-means, so it matches the single "emissions Δ vs base" number
+# printed by `run_comparison`, and the CI reflects the genuine paired spread. This is
+# the shared `pct_diff_vs` convention used by every "X vs base" percentage panel.
+emissions_pct_diff(emis_base, emis_carbon) = pct_diff_vs(emis_carbon, emis_base)
 
 function plot_emissions_diff(emis_base, emis_carbon)
     T = size(emis_base, 1)

@@ -8,10 +8,11 @@
 # `cpi_base`/`cpi_carbon` are (T × n_sims), one row per simulated quarter
 # (2024Q1..2028Q4) — hand-tracked, so row 1 is already the first simulated quarter
 # (no initial condition to drop, `start_q0 = 0`). Base and carbon within a
-# repetition share the same RNG seed, so the per-run ratio `carbon/base − 1`
-# isolates the tax effect cleanly; we take that paired difference per run, then show
-# the cross-run mean ± 95% CI ribbon (the same band style as the other panels).
-cpi_pct_diff(cpi_base, cpi_carbon) = 100 .* (cpi_carbon ./ cpi_base .- 1)
+# repetition share the same RNG seed, so the paired difference isolates the tax effect
+# cleanly. We report the paired ABSOLUTE difference per run divided by the cross-run
+# mean base level (the shared `pct_diff_vs` convention — ratio-of-means), then show the
+# cross-run mean ± 95% CI ribbon.
+cpi_pct_diff(cpi_base, cpi_carbon) = pct_diff_vs(cpi_carbon, cpi_base)
 
 function plot_cpi_diff(cpi_base, cpi_carbon)
     T = size(cpi_base, 1)

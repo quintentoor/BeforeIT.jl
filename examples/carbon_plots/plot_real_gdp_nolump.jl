@@ -32,24 +32,29 @@ function plot_real_gdp_base_vs_nolump(gdp_base, gdp_nolump,
     return p
 end
 
-# Same data as a mean-vs-time table: base vs nolump real GDP side by side.
+# Same data as a mean-vs-time table: base vs nolump real GDP side by side, plus a
+# two-sided paired p-value column (nolump ≠ base): as with the carbon run there is no
+# a priori sign for the real-GDP effect, so the two-sided test is the appropriate one.
+# Computed on the same `[2:end, :]` slices; "—" marks quarters where the two runs are
+# identical (no variation, test undefined, e.g. t = 1).
 function table_real_gdp_base_vs_nolump(gdp_base, gdp_nolump,
         gdp_base_common = gdp_base, gdp_nolump_common = gdp_nolump; common_deflator = false)
     b, nl = common_deflator ? (gdp_base_common, gdp_nolump_common) : (gdp_base, gdp_nolump)
     title = common_deflator ? "real GDP (common deflator)" : "real GDP"
     return mean_table(
-        title, "base (no tax)" => b[2:end, :], "nolump" => nl[2:end, :],
+        title, "base (no tax)" => b[2:end, :], "nolump" => nl[2:end, :];
+        extra = ["p (2-sided)" => paired_pvalue(b[2:end, :], nl[2:end, :]; tail = :two)],
     )
 end
 
 # nolump real GDP as a % difference from base, quarter by quarter. Negative ⇒ the
-# no-recycling run's real GDP is BELOW base. Per-run paired ratio nolump/base − 1
-# (same seed), then cross-run mean ± 95% CI — the same convention as
-# `plot_real_gdp_diff`.
+# no-recycling run's real GDP is BELOW base. Paired difference per run scaled by the
+# mean base level (the shared `pct_diff_vs` convention — ratio-of-means), then
+# cross-run mean ± 95% CI — the same convention as `plot_real_gdp_diff`.
 function plot_real_gdp_diff_base_vs_nolump(gdp_base, gdp_nolump,
         gdp_base_common = gdp_base, gdp_nolump_common = gdp_nolump; common_deflator = false)
     b, nl = common_deflator ? (gdp_base_common, gdp_nolump_common) : (gdp_base, gdp_nolump)
-    d = 100 .* (nl[2:end, :] ./ b[2:end, :] .- 1)
+    d = pct_diff_vs(nl[2:end, :], b[2:end, :])
     T = size(d, 1)
     m, s = confidence_band(d)
     suffix = common_deflator ? " (common deflator)" : ""
@@ -69,6 +74,6 @@ function table_real_gdp_diff_base_vs_nolump(gdp_base, gdp_nolump,
     suffix = common_deflator ? " (common deflator)" : ""
     return mean_table(
         "real GDP Δ vs base — nolump" * suffix * " (% vs base)",
-        "nolump vs base" => 100 .* (nl[2:end, :] ./ b[2:end, :] .- 1),
+        "nolump vs base" => pct_diff_vs(nl[2:end, :], b[2:end, :]),
     )
 end
